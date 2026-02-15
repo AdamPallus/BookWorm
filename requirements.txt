@@ -1,0 +1,8 @@
+fastapi==0.115.8
+uvicorn==0.30.6
+python-multipart==0.0.20
+ebooklib==0.18
+beautifulsoup4==4.12.3
+openai==1.61.0
+tiktoken==0.7.0
+sqlite-vec==0.1.6

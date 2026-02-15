@@ -1,0 +1,111 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bookworm</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 24px; }
+    .row { margin-bottom: 16px; }
+    textarea { width: 100%; height: 100px; }
+    #answer { white-space: pre-wrap; background: #f7f7f7; padding: 12px; }
+    .sources { margin-top: 12px; }
+    .source { background: #fafafa; border: 1px solid #eee; padding: 8px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Bookworm (MVP)</h1>
+
+  <div class="row">
+    <label>Import EPUB: </label>
+    <input type="file" id="epubFile" />
+    <button onclick="importBook()">Import</button>
+  </div>
+
+  <div class="row">
+    <label>Book: </label>
+    <select id="bookSelect"></select>
+    <button onclick="loadBooks()">Refresh</button>
+  </div>
+
+  <div class="row">
+    <label>Chapter index (0-based): </label>
+    <input type="number" id="chapterIndex" value="0" />
+    <label>Percent (0-100): </label>
+    <input type="number" id="chapterPercent" value="0" />
+    <button onclick="setPosition()">Set Position</button>
+  </div>
+
+  <div class="row">
+    <label>Question:</label>
+    <textarea id="question"></textarea>
+    <button onclick="askQuestion()">Ask</button>
+  </div>
+
+  <div class="row">
+    <h3>Answer</h3>
+    <div id="answer"></div>
+    <div class="sources" id="sources"></div>
+  </div>
+
+  <script>
+    async function loadBooks() {
+      const res = await fetch('/api/books');
+      const data = await res.json();
+      const select = document.getElementById('bookSelect');
+      select.innerHTML = '';
+      data.books.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.textContent = `${b.title} (id: ${b.id})`;
+        select.appendChild(opt);
+      });
+    }
+
+    async function importBook() {
+      const fileInput = document.getElementById('epubFile');
+      if (!fileInput.files.length) return alert('Choose an EPUB');
+      const form = new FormData();
+      form.append('file', fileInput.files[0]);
+      const res = await fetch('/api/books/import', { method: 'POST', body: form });
+      const data = await res.json();
+      alert('Imported: ' + data.title);
+      loadBooks();
+    }
+
+    async function setPosition() {
+      const bookId = document.getElementById('bookSelect').value;
+      const chapterIndex = parseInt(document.getElementById('chapterIndex').value);
+      const percent = parseFloat(document.getElementById('chapterPercent').value);
+      const res = await fetch(`/api/books/${bookId}/position`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chapter_index: chapterIndex, percent })
+      });
+      const data = await res.json();
+      alert('Position set: ' + data.position_index);
+    }
+
+    async function askQuestion() {
+      const bookId = document.getElementById('bookSelect').value;
+      const question = document.getElementById('question').value;
+      const res = await fetch(`/api/books/${bookId}/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question })
+      });
+      const data = await res.json();
+      document.getElementById('answer').textContent = data.answer;
+      const sources = document.getElementById('sources');
+      sources.innerHTML = '';
+      (data.sources || []).forEach(s => {
+        const div = document.createElement('div');
+        div.className = 'source';
+        div.textContent = `Chapter ${s.chapter_index + 1} | Pos ${s.position_index}\n\n${s.text}`;
+        sources.appendChild(div);
+      });
+    }
+
+    loadBooks();
+  </script>
+</body>
+</html>
