@@ -10,12 +10,15 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 export OPENAI_API_KEY=...  # required
+
+# Optional: better token counting during ingest
+pip install tiktoken
 ```
 
 ## Run
 
 ```bash
-uvicorn app.main:app --reload
+./scripts/run_server.sh
 ```
 
 Open: http://localhost:8000

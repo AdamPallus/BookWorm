@@ -1,111 +1,3911 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Bookworm</title>
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
+  <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
   <style>
-    body { font-family: system-ui, -apple-system, sans-serif; margin: 24px; }
-    .row { margin-bottom: 16px; }
-    textarea { width: 100%; height: 100px; }
-    #answer { white-space: pre-wrap; background: #f7f7f7; padding: 12px; }
-    .sources { margin-top: 12px; }
-    .source { background: #fafafa; border: 1px solid #eee; padding: 8px; margin-bottom: 8px; }
+    :root {
+      --bg: #1a1a1a;
+      --bg-2: #242220;
+      --surface: #2a2725;
+      --surface-2: #2e2a27;
+      --border: #3a3530;
+      --text: #e8e0d4;
+      --text-muted: #c0b6a7;
+      --accent: #d4a048;
+      --danger: #cc6b5a;
+      --card-radius: 14px;
+      --shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+      --reader-max-width: 980px;
+      --app-vh: 1vh;
+      --reader-topbar-height: 48px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: radial-gradient(90vw 60vh at 20% -10%, #34302b 0%, var(--bg) 50%) no-repeat,
+                  linear-gradient(180deg, var(--bg), var(--bg-2));
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    body {
+      padding: 24px;
+    }
+
+    .hidden { display: none !important; }
+
+    .top-shell {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      gap: 12px;
+    }
+
+    .title {
+      margin: 0;
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      margin: 4px 0 0;
+      font-size: 14px;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+      color: inherit;
+    }
+
+    button {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 10px 14px;
+      cursor: pointer;
+      transition: background 160ms ease, transform 160ms ease, border-color 160ms ease;
+    }
+
+    button:hover:not(:disabled) {
+      background: #35312d;
+      border-color: #4a433c;
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .btn-accent {
+      background: linear-gradient(180deg, #deab55, #c58f33);
+      color: #231a0e;
+      border-color: #c58f33;
+      font-weight: 700;
+    }
+
+    .btn-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .status-pill {
+      font-size: 12px;
+      color: #231a0e;
+      background: var(--accent);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-weight: 700;
+    }
+
+    .book-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 16px;
+    }
+
+    .book-card {
+      position: relative;
+      border: 1px solid var(--border);
+      border-radius: var(--card-radius);
+      background: linear-gradient(180deg, #2f2c29, #292623);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      min-height: 320px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .book-delete {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      padding: 0;
+      border: 1px solid #5d4c44;
+      background: rgba(26, 24, 22, 0.75);
+      color: #e4d6c4;
+      z-index: 3;
+      font-size: 16px;
+      line-height: 1;
+    }
+
+    .book-cover {
+      width: 100%;
+      aspect-ratio: 3 / 4;
+      object-fit: cover;
+      background: linear-gradient(140deg, #52483f 0%, #322d29 40%, #2a2521 100%);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .book-cover.fallback {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+      text-align: center;
+      font-family: Georgia, serif;
+      font-size: 18px;
+      line-height: 1.35;
+      color: #eadcc8;
+    }
+
+    .book-meta {
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex: 1;
+    }
+
+    .book-title {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .book-author {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .book-sub {
+      margin: 0;
+      color: #d6c9b8;
+      font-size: 12px;
+    }
+
+    .book-progress {
+      margin-top: auto;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      height: 8px;
+      background: #201d1b;
+      overflow: hidden;
+    }
+
+    .book-progress > span {
+      display: block;
+      height: 100%;
+      background: linear-gradient(90deg, #a9762a, #e2b560);
+      width: 0;
+      transition: width 220ms ease;
+    }
+
+    .empty-state {
+      border: 1px dashed #5a5046;
+      border-radius: 18px;
+      padding: 36px;
+      text-align: center;
+      color: var(--text-muted);
+      background: rgba(42, 39, 37, 0.55);
+    }
+
+    .import-status {
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--text-muted);
+      min-height: 20px;
+    }
+
+    .reader-shell {
+      position: fixed;
+      inset: 0;
+      height: calc(var(--app-vh) * 100);
+      background: linear-gradient(180deg, #1f1d1b 0%, #1a1918 100%);
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .reader-controls {
+      overflow: hidden;
+      max-height: 220px;
+      opacity: 1;
+      transition: max-height 180ms ease, opacity 180ms ease;
+    }
+
+    .reader-shell.controls-collapsed .reader-controls {
+      max-height: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .reader-topbar {
+      min-height: 48px;
+      border-bottom: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      padding: 0 12px;
+      gap: 10px;
+      background: #24211f;
+    }
+
+    .reader-topbar .meta {
+      min-width: 0;
+    }
+
+    .reader-title {
+      margin: 0;
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-weight: 700;
+    }
+
+    .reader-progress {
+      margin: 2px 0 0;
+      font-size: 12px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .reader-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .reader-actions select {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--text);
+      padding: 8px 10px;
+      min-width: 92px;
+    }
+
+    #chapterJumpSelect {
+      min-width: 180px;
+      max-width: 280px;
+      width: min(34vw, 280px);
+    }
+
+    .reader-actions .nav-btn {
+      min-width: 64px;
+      padding: 8px 10px;
+    }
+
+    #bookmarkToggleBtn {
+      min-width: 112px;
+    }
+
+    #bookmarksBtn,
+    #tocBtn {
+      min-width: 72px;
+      padding: 8px 10px;
+    }
+
+    .reader-controls-toggle {
+      align-self: center;
+      margin: 6px auto 6px;
+      width: 36px;
+      height: 20px;
+      border-radius: 999px;
+      border: 1px solid #5a4f45;
+      background: rgba(42, 38, 35, 0.9);
+      color: #d8c9b2;
+      padding: 0;
+      line-height: 1;
+      font-size: 14px;
+      z-index: 32;
+    }
+
+    .reader-shell.controls-collapsed .reader-controls-toggle {
+      margin-top: 8px;
+    }
+
+    .reader-main {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: stretch;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .reader-frame {
+      width: min(100%, var(--reader-max-width));
+      margin: 0 auto;
+      background: var(--surface-2);
+      border-left: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      position: relative;
+    }
+
+    #readerSurface {
+      width: 100%;
+      height: calc((var(--app-vh) * 100) - var(--reader-topbar-height));
+    }
+
+    .reader-searchbar {
+      border-bottom: 1px solid var(--border);
+      background: #221f1d;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+    }
+
+    .reader-searchbar input {
+      flex: 1;
+      min-width: 140px;
+      border: 1px solid #4a433c;
+      border-radius: 10px;
+      background: #1f1c1a;
+      color: var(--text);
+      padding: 8px 10px;
+    }
+
+    .reader-searchbar button {
+      min-width: 52px;
+      padding: 8px 10px;
+    }
+
+    .reader-search-status {
+      min-width: 86px;
+      font-size: 12px;
+      color: var(--text-muted);
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .reader-sidepanels {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      right: auto;
+      z-index: 38;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-width: min(94vw, 420px);
+    }
+
+    .reader-panel {
+      pointer-events: auto;
+      display: none;
+      flex-direction: column;
+      background: rgba(37, 33, 30, 0.96);
+      border: 1px solid #4b433b;
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      max-height: min(68vh, 620px);
+      overflow: hidden;
+      width: min(420px, 92vw);
+    }
+
+    .reader-panel.open {
+      display: flex;
+    }
+
+    .reader-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid #4b433b;
+      background: rgba(31, 28, 26, 0.96);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .reader-panel-header button {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: 8px;
+    }
+
+    .reader-panel-list {
+      overflow: auto;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .reader-panel-empty {
+      color: var(--text-muted);
+      font-size: 12px;
+      padding: 10px 4px 12px;
+    }
+
+    .bookmark-item {
+      border: 1px solid #51483f;
+      border-radius: 10px;
+      background: #322d29;
+      padding: 8px 9px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .bookmark-main {
+      min-width: 0;
+    }
+
+    .bookmark-label {
+      margin: 0;
+      font-size: 12px;
+      color: #eadbc4;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .bookmark-sub {
+      margin: 4px 0 0;
+      font-size: 11px;
+      color: #b8a999;
+    }
+
+    .bookmark-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .bookmark-actions button {
+      min-width: 56px;
+      padding: 5px 8px;
+      font-size: 11px;
+      border-radius: 8px;
+    }
+
+    .toc-item {
+      border: 1px solid #4c433b;
+      border-radius: 10px;
+      background: #2f2a26;
+      padding: 6px 8px;
+      font-size: 12px;
+      color: #e0d3bf;
+      text-align: left;
+      white-space: normal;
+      word-break: break-word;
+      transform: none !important;
+    }
+
+    .toc-item:hover:not(:disabled) {
+      background: #3a332e;
+    }
+
+    .reader-status {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 20px;
+      color: var(--text-muted);
+      font-size: 14px;
+      z-index: 18;
+      pointer-events: none;
+    }
+
+    .reader-status.visible {
+      display: flex;
+    }
+
+    .turn-zone {
+      position: absolute;
+      top: 0;
+      width: 16%;
+      height: 100%;
+      z-index: 15;
+      cursor: pointer;
+      background: transparent;
+    }
+
+    .turn-zone.left { left: 0; }
+    .turn-zone.right { right: 0; }
+    .turn-zone.disabled { pointer-events: none; }
+
+    .qa-fab {
+      position: absolute;
+      right: 16px;
+      bottom: 16px;
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      font-size: 20px;
+      border: none;
+      color: #2a1d08;
+      background: radial-gradient(circle at 35% 30%, #f4c973, #cf9941 60%, #b9802d);
+      box-shadow: 0 12px 22px rgba(0, 0, 0, 0.35);
+      z-index: 35;
+    }
+
+    .return-controls {
+      position: absolute;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      z-index: 36;
+      display: none;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .return-controls.open {
+      display: flex;
+    }
+
+    .return-btn {
+      border: 1px solid #9b6e2d;
+      background: linear-gradient(180deg, #e0b25f, #c58c35);
+      color: #2a1b08;
+      font-weight: 700;
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.28);
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    .return-dismiss {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      padding: 0;
+      border: 1px solid #6d5a4f;
+      background: rgba(35, 31, 28, 0.9);
+      color: #dcccb7;
+    }
+
+    .qa-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(7, 6, 5, 0.45);
+      z-index: 40;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease;
+    }
+
+    .qa-backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .qa-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: 400px;
+      max-width: 100vw;
+      height: calc(var(--app-vh) * 100);
+      background: #262320;
+      border-left: 1px solid var(--border);
+      z-index: 45;
+      transform: translateX(100%);
+      transition: transform 190ms ease;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+    }
+
+    .qa-panel.open {
+      transform: translateX(0);
+    }
+
+    .qa-header {
+      border-bottom: 1px solid var(--border);
+      padding: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .qa-header h3 {
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .qa-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .qa-controls button {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      padding: 0;
+    }
+
+    .qa-context {
+      border-bottom: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 10px 12px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .qa-context-link {
+      border: 1px solid #6e5b49;
+      border-radius: 999px;
+      background: rgba(38, 33, 29, 0.9);
+      color: #dec8a6;
+      font-size: 11px;
+      padding: 4px 8px;
+      line-height: 1.2;
+    }
+
+    .qa-messages {
+      overflow-y: auto;
+      min-height: 0;
+      padding: 14px 12px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .msg {
+      max-width: 92%;
+      padding: 10px 12px;
+      border-radius: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      font-size: 14px;
+    }
+
+    .msg-user {
+      align-self: flex-end;
+      background: linear-gradient(180deg, #d8ac62, #bb8840);
+      color: #261b0c;
+      border-bottom-right-radius: 4px;
+      font-weight: 600;
+    }
+
+    .msg-ai {
+      align-self: flex-start;
+      background: #35302c;
+      border: 1px solid #45403a;
+      border-bottom-left-radius: 4px;
+    }
+
+    .citation-link {
+      color: #e8bf73;
+      font-weight: 700;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      cursor: pointer;
+    }
+
+    .citation-link-fallback {
+      color: #d7b89a;
+      text-decoration-style: dotted;
+    }
+
+    .citation-debug {
+      margin-top: 8px;
+      border-top: 1px solid #4a433c;
+      padding-top: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 11px;
+      color: #b8a999;
+      white-space: pre-wrap;
+    }
+
+    .citation-debug summary {
+      cursor: pointer;
+      color: #d8c4ae;
+      font-family: inherit;
+      font-size: 11px;
+      user-select: none;
+      margin-bottom: 4px;
+    }
+
+    .citation-debug pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg-state {
+      color: var(--text-muted);
+      font-size: 12px;
+      padding-left: 2px;
+    }
+
+    .source-list {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .source-item {
+      border: 1px solid #4d453d;
+      border-radius: 8px;
+      background: #2f2a26;
+      padding: 8px;
+      color: #d0c2af;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .qa-input-wrap {
+      border-top: 1px solid var(--border);
+      padding: 10px;
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      background: #25221f;
+    }
+
+    .qa-input-wrap textarea {
+      width: 100%;
+      resize: none;
+      min-height: 44px;
+      max-height: 120px;
+      border: 1px solid #4a433c;
+      border-radius: 10px;
+      background: #1f1c1a;
+      color: var(--text);
+      padding: 10px;
+      outline: none;
+    }
+
+    .qa-input-wrap textarea:focus {
+      border-color: #8c6a37;
+      box-shadow: 0 0 0 2px rgba(212, 160, 72, 0.2);
+    }
+
+    .qa-input-wrap .send-btn {
+      padding: 0 14px;
+      border-radius: 10px;
+      border: none;
+      font-weight: 700;
+      color: #2f210f;
+      background: linear-gradient(180deg, #e2b560, #c18834);
+    }
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.52);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 70;
+      padding: 16px;
+    }
+
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      width: min(460px, 100%);
+      border-radius: 14px;
+      background: #2b2724;
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    .modal h3 {
+      margin: 0 0 14px;
+      font-size: 18px;
+    }
+
+    .field {
+      margin-bottom: 12px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 6px;
+      color: var(--text-muted);
+    }
+
+    .field input,
+    .field select {
+      width: 100%;
+      border: 1px solid #4a433c;
+      border-radius: 10px;
+      background: #1f1c1a;
+      padding: 9px 10px;
+      color: var(--text);
+    }
+
+    .field input[type=range] {
+      padding: 0;
+      accent-color: var(--accent);
+    }
+
+    .range-value {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .row-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 6px;
+    }
+
+    @media (max-width: 1024px) {
+      .qa-panel { width: 80vw; }
+      .reader-frame { width: 100%; }
+      body { padding: 18px; }
+    }
+
+    @media (max-width: 767px) {
+      .qa-panel { width: 100vw; }
+      .header { flex-wrap: wrap; }
+      .book-grid { grid-template-columns: 1fr; }
+      .reader-topbar {
+        grid-template-columns: auto 1fr;
+        grid-template-areas:
+          "left right"
+          "meta meta";
+        height: auto;
+        padding: 8px;
+      }
+      .reader-topbar .back-btn { grid-area: left; }
+      .reader-topbar .meta { grid-area: meta; }
+      .reader-topbar .reader-actions { grid-area: right; justify-self: end; }
+      .reader-sidepanels {
+        left: 8px;
+        top: 8px;
+        max-width: calc(100vw - 16px);
+      }
+      .reader-panel {
+        width: calc(100vw - 16px);
+      }
+      #readerSurface { height: calc((var(--app-vh) * 100) - var(--reader-topbar-height)); }
+      #chapterJumpSelect { width: min(52vw, 260px); min-width: 130px; }
+      .reader-search-status { min-width: 0; font-size: 11px; }
+    }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://unpkg.com/epubjs/dist/epub.min.js"></script>
 </head>
 <body>
-  <h1>Bookworm (MVP)</h1>
+  <div class="top-shell" id="libraryView">
+    <div class="header">
+      <div>
+        <h1 class="title">Bookworm</h1>
+        <p class="subtitle">Read your EPUBs and ask spoiler-safe questions.</p>
+      </div>
+      <div class="header-actions">
+        <button id="importBtn" class="btn-accent">Import EPUB</button>
+        <button id="settingsBtn" class="btn-icon" title="Settings">⚙</button>
+      </div>
+    </div>
 
-  <div class="row">
-    <label>Import EPUB: </label>
-    <input type="file" id="epubFile" />
-    <button onclick="importBook()">Import</button>
+    <input id="epubInput" type="file" accept=".epub" class="hidden" />
+    <div id="importStatus" class="import-status"></div>
+    <div id="booksGrid" class="book-grid"></div>
   </div>
 
-  <div class="row">
-    <label>Book: </label>
-    <select id="bookSelect"></select>
-    <button onclick="loadBooks()">Refresh</button>
+  <div id="readerView" class="reader-shell hidden">
+    <div id="readerControls" class="reader-controls">
+      <div id="readerTopbar" class="reader-topbar">
+        <button id="backToLibrary" class="back-btn">← Library</button>
+        <div class="meta">
+          <p id="readerTitle" class="reader-title"></p>
+          <p id="readerProgress" class="reader-progress"></p>
+        </div>
+        <div class="reader-actions">
+          <button id="prevPageBtn" class="nav-btn" title="Previous page">Prev</button>
+          <button id="nextPageBtn" class="nav-btn" title="Next page">Next</button>
+          <select id="chapterJumpSelect" title="Jump to chapter">
+            <option value="">Chapters</option>
+          </select>
+          <button id="tocBtn" title="Table of contents">TOC</button>
+          <button id="bookmarkToggleBtn" title="Bookmark current page">☆ Bookmark</button>
+          <button id="bookmarksBtn" title="View bookmarks">Bookmarks</button>
+          <select id="readerSpreadSelect" title="Page layout">
+            <option value="single">Single</option>
+            <option value="double">Double</option>
+          </select>
+          <button id="fontMinus">A-</button>
+          <button id="fontPlus">A+</button>
+          <button id="readerSettings" class="btn-icon" title="Settings">⚙</button>
+        </div>
+      </div>
+
+      <div id="readerSearchBar" class="reader-searchbar">
+        <input id="readerSearchInput" type="search" placeholder="Search text in book" />
+        <button id="readerSearchRun" title="Search">Find</button>
+        <button id="readerSearchPrev" title="Previous match">↑</button>
+        <button id="readerSearchNext" title="Next match">↓</button>
+        <div id="readerSearchStatus" class="reader-search-status"></div>
+      </div>
+    </div>
+    <button id="readerControlsToggle" class="reader-controls-toggle" title="Collapse controls">▴</button>
+
+    <div id="readerMain" class="reader-main">
+      <div class="reader-sidepanels">
+        <div id="tocPanel" class="reader-panel">
+          <div class="reader-panel-header">
+            <span>Table of Contents</span>
+            <button id="tocCloseBtn" title="Close table of contents">✕</button>
+          </div>
+          <div id="tocList" class="reader-panel-list"></div>
+        </div>
+        <div id="bookmarksPanel" class="reader-panel">
+          <div class="reader-panel-header">
+            <span>Bookmarks</span>
+            <button id="bookmarksCloseBtn" title="Close bookmarks">✕</button>
+          </div>
+          <div id="bookmarksList" class="reader-panel-list"></div>
+        </div>
+      </div>
+      <div class="reader-frame">
+        <div id="readerSurface"></div>
+        <div id="readerStatus" class="reader-status"></div>
+        <div id="turnLeft" class="turn-zone left" title="Previous page"></div>
+        <div id="turnRight" class="turn-zone right" title="Next page"></div>
+      </div>
+      <button id="qaFab" class="qa-fab" title="Ask about this book">💬</button>
+      <div id="returnControls" class="return-controls">
+        <button id="returnBtn" class="return-btn">↩ Back to reading</button>
+        <button id="returnDismissBtn" class="return-dismiss" title="Dismiss">×</button>
+      </div>
+    </div>
   </div>
 
-  <div class="row">
-    <label>Chapter index (0-based): </label>
-    <input type="number" id="chapterIndex" value="0" />
-    <label>Percent (0-100): </label>
-    <input type="number" id="chapterPercent" value="0" />
-    <button onclick="setPosition()">Set Position</button>
-  </div>
+  <div id="qaBackdrop" class="qa-backdrop"></div>
+  <aside id="qaPanel" class="qa-panel">
+    <div class="qa-header">
+      <h3>Ask about this book</h3>
+      <div class="qa-controls">
+        <button id="qaBackBtn" title="Previous answer">◀</button>
+        <button id="qaForwardBtn" title="Next answer">▶</button>
+        <button id="qaCloseBtn" title="Close">✕</button>
+      </div>
+    </div>
+    <div id="qaContext" class="qa-context">
+      <span id="qaContextText">I know everything up to your current page.</span>
+      <button id="qaAskLocationLink" class="qa-context-link hidden">↩ Back to question location</button>
+    </div>
+    <div id="qaMessages" class="qa-messages"></div>
+    <div class="qa-input-wrap">
+      <textarea
+        id="qaInput"
+        name="qa_plain_text"
+        placeholder="Ask a question about what you've read..."
+        autocomplete="off"
+        data-form-type="other"
+        data-1p-ignore="true"
+        data-lpignore="true"
+        autocorrect="off"
+        autocapitalize="sentences"
+        spellcheck="false"
+        inputmode="text"
+        enterkeyhint="send"
+      ></textarea>
+      <div style="display:flex; flex-direction:column; gap:8px; min-width:108px;">
+        <select id="qaModelSelect"></select>
+        <button id="qaSendBtn" class="send-btn">Send</button>
+      </div>
+    </div>
+  </aside>
 
-  <div class="row">
-    <label>Question:</label>
-    <textarea id="question"></textarea>
-    <button onclick="askQuestion()">Ask</button>
-  </div>
+  <div id="settingsModal" class="modal-overlay">
+    <div class="modal">
+      <h3>Settings</h3>
 
-  <div class="row">
-    <h3>Answer</h3>
-    <div id="answer"></div>
-    <div class="sources" id="sources"></div>
+      <div class="field">
+        <label for="apiKeyInput">OpenAI API Key</label>
+        <input
+          id="apiKeyInput"
+          type="password"
+          placeholder="sk-..."
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
+          inputmode="text"
+        />
+        <div id="currentKey" class="hint"></div>
+      </div>
+
+      <div class="field">
+        <label for="modelSelect">Q&A model</label>
+        <select id="modelSelect"></select>
+      </div>
+
+      <div class="field">
+        <label for="fontSizeInput">Reader font size (%)</label>
+        <input id="fontSizeInput" type="number" min="70" max="160" />
+      </div>
+
+      <div class="field">
+        <label for="spreadSelect">Reader layout</label>
+        <select id="spreadSelect">
+          <option value="single">Single column</option>
+          <option value="double">Double column</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="readerWidthInput">Reader width</label>
+        <input id="readerWidthInput" type="range" min="760" max="1320" step="10" />
+        <div id="readerWidthValue" class="range-value">980px</div>
+      </div>
+
+      <div class="field">
+        <label for="readerBottomPaddingInput">Bottom padding</label>
+        <input id="readerBottomPaddingInput" type="range" min="12" max="120" step="2" />
+        <div id="readerBottomPaddingValue" class="range-value">34px</div>
+      </div>
+
+      <div class="field">
+        <label for="citationDebugInput">
+          <input id="citationDebugInput" type="checkbox" />
+          Citation debug mode
+        </label>
+        <div class="hint">Show how each citation was parsed and mapped.</div>
+      </div>
+
+      <div class="row-actions">
+        <button id="cancelSettings">Cancel</button>
+        <button id="saveSettings" class="btn-accent">Save</button>
+      </div>
+    </div>
   </div>
 
   <script>
-    async function loadBooks() {
-      const res = await fetch('/api/books');
-      const data = await res.json();
-      const select = document.getElementById('bookSelect');
-      select.innerHTML = '';
-      data.books.forEach(b => {
-        const opt = document.createElement('option');
-        opt.value = b.id;
-        opt.textContent = `${b.title} (id: ${b.id})`;
-        select.appendChild(opt);
+    const state = {
+      settings: null,
+      books: [],
+      currentBookId: null,
+      currentBook: null,
+      chapters: [],
+      currentPosition: null,
+      answerHistory: [],
+      answerHistoryIndex: -1,
+      ebook: null,
+      rendition: null,
+      readerReady: false,
+      locationsReady: false,
+      chapterJumpInFlight: false,
+      pendingPosition: null,
+      positionTimer: null,
+      lastPositionSentAt: 0,
+      isAsking: false,
+      returnStack: [],
+      returnDismissTimer: null,
+      suppressReturnDismissUntil: 0,
+      citationHighlightCleanups: [],
+      searchQuery: '',
+      searchMatches: [],
+      searchMatchIndex: -1,
+      searchReturnCaptured: false,
+      searchMatchCfiCache: {},
+      bookmarks: [],
+      tocItems: [],
+      controlsCollapsed: false,
+      controlsLayoutTimer: null,
+      chapterChunkCache: {},
+      chapterCfiBuildInFlight: {},
+      chapterCfiVerified: {},
+    };
+
+    const els = {
+      libraryView: document.getElementById('libraryView'),
+      readerView: document.getElementById('readerView'),
+      booksGrid: document.getElementById('booksGrid'),
+      importStatus: document.getElementById('importStatus'),
+      importBtn: document.getElementById('importBtn'),
+      epubInput: document.getElementById('epubInput'),
+      settingsBtn: document.getElementById('settingsBtn'),
+      readerSettings: document.getElementById('readerSettings'),
+      readerControls: document.getElementById('readerControls'),
+      readerTopbar: document.getElementById('readerTopbar'),
+      readerSearchBar: document.getElementById('readerSearchBar'),
+      readerControlsToggle: document.getElementById('readerControlsToggle'),
+      backToLibrary: document.getElementById('backToLibrary'),
+      readerTitle: document.getElementById('readerTitle'),
+      readerProgress: document.getElementById('readerProgress'),
+      readerMain: document.getElementById('readerMain'),
+      readerSurface: document.getElementById('readerSurface'),
+      readerStatus: document.getElementById('readerStatus'),
+      prevPageBtn: document.getElementById('prevPageBtn'),
+      nextPageBtn: document.getElementById('nextPageBtn'),
+      chapterJumpSelect: document.getElementById('chapterJumpSelect'),
+      tocBtn: document.getElementById('tocBtn'),
+      tocPanel: document.getElementById('tocPanel'),
+      tocList: document.getElementById('tocList'),
+      tocCloseBtn: document.getElementById('tocCloseBtn'),
+      bookmarkToggleBtn: document.getElementById('bookmarkToggleBtn'),
+      bookmarksBtn: document.getElementById('bookmarksBtn'),
+      bookmarksPanel: document.getElementById('bookmarksPanel'),
+      bookmarksList: document.getElementById('bookmarksList'),
+      bookmarksCloseBtn: document.getElementById('bookmarksCloseBtn'),
+      readerSpreadSelect: document.getElementById('readerSpreadSelect'),
+      turnLeft: document.getElementById('turnLeft'),
+      turnRight: document.getElementById('turnRight'),
+      returnControls: document.getElementById('returnControls'),
+      returnBtn: document.getElementById('returnBtn'),
+      returnDismissBtn: document.getElementById('returnDismissBtn'),
+      readerSearchInput: document.getElementById('readerSearchInput'),
+      readerSearchRun: document.getElementById('readerSearchRun'),
+      readerSearchPrev: document.getElementById('readerSearchPrev'),
+      readerSearchNext: document.getElementById('readerSearchNext'),
+      readerSearchStatus: document.getElementById('readerSearchStatus'),
+      qaFab: document.getElementById('qaFab'),
+      qaBackdrop: document.getElementById('qaBackdrop'),
+      qaPanel: document.getElementById('qaPanel'),
+      qaCloseBtn: document.getElementById('qaCloseBtn'),
+      qaBackBtn: document.getElementById('qaBackBtn'),
+      qaForwardBtn: document.getElementById('qaForwardBtn'),
+      qaContext: document.getElementById('qaContext'),
+      qaContextText: document.getElementById('qaContextText'),
+      qaAskLocationLink: document.getElementById('qaAskLocationLink'),
+      qaMessages: document.getElementById('qaMessages'),
+      qaInput: document.getElementById('qaInput'),
+      qaSendBtn: document.getElementById('qaSendBtn'),
+      qaModelSelect: document.getElementById('qaModelSelect'),
+      fontMinus: document.getElementById('fontMinus'),
+      fontPlus: document.getElementById('fontPlus'),
+      settingsModal: document.getElementById('settingsModal'),
+      apiKeyInput: document.getElementById('apiKeyInput'),
+      currentKey: document.getElementById('currentKey'),
+      modelSelect: document.getElementById('modelSelect'),
+      fontSizeInput: document.getElementById('fontSizeInput'),
+      spreadSelect: document.getElementById('spreadSelect'),
+      readerWidthInput: document.getElementById('readerWidthInput'),
+      readerWidthValue: document.getElementById('readerWidthValue'),
+      readerBottomPaddingInput: document.getElementById('readerBottomPaddingInput'),
+      readerBottomPaddingValue: document.getElementById('readerBottomPaddingValue'),
+      citationDebugInput: document.getElementById('citationDebugInput'),
+      cancelSettings: document.getElementById('cancelSettings'),
+      saveSettings: document.getElementById('saveSettings'),
+    };
+
+    function clamp(n, min, max) {
+      return Math.max(min, Math.min(max, n));
+    }
+
+    function asNumber(value, fallback) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function isCitationDebugEnabled() {
+      return !!(state.settings && state.settings.citation_debug_mode);
+    }
+
+    function syncViewportMetrics() {
+      const viewportHeight = window.visualViewport && window.visualViewport.height
+        ? window.visualViewport.height
+        : window.innerHeight;
+      const vh = Math.max(1, viewportHeight * 0.01);
+      document.documentElement.style.setProperty('--app-vh', `${vh}px`);
+
+      const controlsHeight = els.readerControls
+        ? Math.max(0, Math.round(els.readerControls.getBoundingClientRect().height || 0))
+        : 0;
+      const toggleHeight = els.readerControlsToggle
+        ? Math.max(0, Math.round(els.readerControlsToggle.getBoundingClientRect().height || 0) + 6)
+        : 0;
+      document.documentElement.style.setProperty('--reader-topbar-height', `${controlsHeight + toggleHeight}px`);
+    }
+
+    function withTimeout(promise, ms, label) {
+      return Promise.race([
+        promise,
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+        }),
+      ]);
+    }
+
+    function relativeTime(timestamp) {
+      if (!timestamp) return 'Never opened';
+      const t = new Date(timestamp);
+      if (Number.isNaN(t.getTime())) return '';
+      const delta = Date.now() - t.getTime();
+      const mins = Math.floor(delta / 60000);
+      if (mins < 1) return 'Just now';
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}h ago`;
+      const days = Math.floor(hrs / 24);
+      return `${days}d ago`;
+    }
+
+    function escapeHtml(text) {
+      return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function escapeAttr(text) {
+      return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function normalizeText(text) {
+      return String(text || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function normalizedWords(text) {
+      return normalizeText(text)
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length >= 3);
+    }
+
+    function escapeRegex(value) {
+      return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function buildHighlightPhrases(sourceText, options = null) {
+      const opts = options || {};
+      if (opts.literal) {
+        const literal = normalizeText(sourceText).toLowerCase();
+        return literal ? [literal] : [];
+      }
+
+      const words = normalizedWords(sourceText);
+      if (!words.length) return [];
+      const phrases = [];
+      const starts = [
+        0,
+        Math.max(0, Math.floor(words.length * 0.2) - 5),
+        Math.max(0, Math.floor(words.length * 0.45) - 5),
+        Math.max(0, Math.floor(words.length * 0.7) - 5),
+        Math.max(0, words.length - 16),
+      ];
+      const uniqueStarts = [...new Set(starts)].filter((start) => start >= 0 && start < words.length);
+
+      uniqueStarts.forEach((start) => {
+        for (let len = 18; len >= 6; len -= 1) {
+          if (start + len > words.length) continue;
+          const phrase = words.slice(start, start + len).join(' ');
+          if (phrase.length < 28) continue;
+          if (!phrases.includes(phrase)) phrases.push(phrase);
+        }
+      });
+      return phrases.slice(0, 80);
+    }
+
+    function buildTextNodeIndex(root) {
+      const doc = root && root.ownerDocument ? root.ownerDocument : null;
+      if (!doc || !root) return null;
+
+      const NodeFilterRef = (doc.defaultView && doc.defaultView.NodeFilter) || NodeFilter;
+      const walker = doc.createTreeWalker(root, NodeFilterRef.SHOW_TEXT);
+      const charMap = [];
+      let joined = '';
+      let node = walker.nextNode();
+
+      while (node) {
+        const text = String(node.textContent || '');
+        if (text.trim()) {
+          for (let i = 0; i < text.length; i += 1) {
+            joined += text[i];
+            charMap.push({ node, offset: i });
+          }
+          joined += '\n';
+          charMap.push(null);
+        }
+        node = walker.nextNode();
+      }
+
+      if (!joined.trim()) return null;
+      return { textLower: joined.toLowerCase(), charMap };
+    }
+
+    function findPhraseSegments(index, phrase, minWords = 6) {
+      if (!index || !phrase) return [];
+      const words = phrase.split(' ').filter(Boolean);
+      if (words.length < Math.max(1, asNumber(minWords, 6))) return [];
+
+      const haystack = index.textLower;
+      let start = -1;
+      let end = -1;
+
+      if (words.length === 1) {
+        const token = words[0].toLowerCase();
+        start = haystack.indexOf(token);
+        if (start >= 0) end = start + token.length;
+      } else {
+        const regex = new RegExp(words.map((w) => escapeRegex(w)).join('[^a-z0-9]+'), 'i');
+        const match = regex.exec(haystack);
+        if (match) {
+          start = match.index;
+          end = match.index + match[0].length;
+        }
+      }
+      if (start < 0 || end <= start) return [];
+
+      let mappedStart = -1;
+      let mappedEnd = -1;
+      for (let i = start; i < end; i += 1) {
+        if (index.charMap[i]) {
+          mappedStart = i;
+          break;
+        }
+      }
+      for (let i = end - 1; i >= start; i -= 1) {
+        if (index.charMap[i]) {
+          mappedEnd = i;
+          break;
+        }
+      }
+      if (mappedStart < 0 || mappedEnd < mappedStart) return [];
+
+      const segments = [];
+      let current = null;
+      for (let i = mappedStart; i <= mappedEnd; i += 1) {
+        const ref = index.charMap[i];
+        if (!ref) {
+          if (current) {
+            segments.push(current);
+            current = null;
+          }
+          continue;
+        }
+        if (!current || current.node !== ref.node || ref.offset !== current.endOffset) {
+          if (current) segments.push(current);
+          current = { node: ref.node, startOffset: ref.offset, endOffset: ref.offset + 1 };
+        } else {
+          current.endOffset += 1;
+        }
+      }
+      if (current) segments.push(current);
+      return segments;
+    }
+
+    function applyHighlightSegments(doc, segments) {
+      if (!doc || !segments.length) return false;
+      const spans = [];
+
+      for (let i = segments.length - 1; i >= 0; i -= 1) {
+        const segment = segments[i];
+        try {
+          const range = doc.createRange();
+          range.setStart(segment.node, segment.startOffset);
+          range.setEnd(segment.node, segment.endOffset);
+          const span = doc.createElement('span');
+          span.className = 'bw-highlight';
+          span.style.setProperty('background-color', 'rgba(245, 225, 108, 0.88)', 'important');
+          span.style.setProperty('color', '#1f1406', 'important');
+          span.style.setProperty('border-radius', '2px', 'important');
+          span.style.setProperty('padding', '0', 'important');
+          span.style.setProperty('box-decoration-break', 'clone', 'important');
+          range.surroundContents(span);
+          spans.push(span);
+        } catch (err) {
+          // Continue wrapping other segments when one fails.
+        }
+      }
+
+      if (!spans.length) return false;
+
+      state.citationHighlightCleanups.push(() => {
+        spans.forEach((span) => {
+          const parent = span.parentNode;
+          if (!parent) return;
+          while (span.firstChild) {
+            parent.insertBefore(span.firstChild, span);
+          }
+          parent.removeChild(span);
+          if (parent.normalize) parent.normalize();
+        });
+      });
+      return true;
+    }
+
+    function tryHighlightInElement(target, sourceText, options = null) {
+      const opts = options || {};
+      const doc = target && target.ownerDocument ? target.ownerDocument : null;
+      if (!doc || !target) return false;
+      const phrases = buildHighlightPhrases(sourceText, opts);
+      if (!phrases.length) return false;
+
+      const index = buildTextNodeIndex(target);
+      if (!index) return false;
+
+      for (const phrase of phrases) {
+        const segments = findPhraseSegments(index, phrase, opts.literal ? 1 : 6);
+        if (!segments.length) continue;
+        if (applyHighlightSegments(doc, segments)) return true;
+      }
+      return false;
+    }
+
+    function clearCitationHighlights() {
+      const cleanups = Array.isArray(state.citationHighlightCleanups) ? state.citationHighlightCleanups : [];
+      state.citationHighlightCleanups = [];
+      cleanups.forEach((cleanup) => {
+        try {
+          if (typeof cleanup === 'function') cleanup();
+        } catch (err) {
+          // ignore cleanup failures
+        }
       });
     }
 
-    async function importBook() {
-      const fileInput = document.getElementById('epubFile');
-      if (!fileInput.files.length) return alert('Choose an EPUB');
-      const form = new FormData();
-      form.append('file', fileInput.files[0]);
-      const res = await fetch('/api/books/import', { method: 'POST', body: form });
-      const data = await res.json();
-      alert('Imported: ' + data.title);
-      loadBooks();
+    function showReaderStatusMessage(message, durationMs = 1800) {
+      if (!els.readerStatus) return;
+      els.readerStatus.textContent = String(message || '');
+      els.readerStatus.classList.add('visible');
+      const duration = Math.max(200, Math.floor(asNumber(durationMs, 1800)));
+      window.setTimeout(() => {
+        if (!els.readerStatus) return;
+        if (els.readerStatus.textContent !== message) return;
+        els.readerStatus.classList.remove('visible');
+        els.readerStatus.textContent = '';
+      }, duration);
     }
 
-    async function setPosition() {
-      const bookId = document.getElementById('bookSelect').value;
-      const chapterIndex = parseInt(document.getElementById('chapterIndex').value);
-      const percent = parseFloat(document.getElementById('chapterPercent').value);
-      const res = await fetch(`/api/books/${bookId}/position`, {
+    function chapterProgressLabel(chapterIndex, chapterPercent = null) {
+      if (!Number.isFinite(Number(chapterIndex))) return 'Saved page';
+      const idx = Math.max(0, Math.floor(Number(chapterIndex)));
+      const pct = Number.isFinite(Number(chapterPercent))
+        ? `${Math.round(clamp(Number(chapterPercent), 0, 100))}%`
+        : null;
+      return pct ? `Chapter ${idx + 1} · ${pct}` : `Chapter ${idx + 1}`;
+    }
+
+    function askLocationForEntry(entry) {
+      if (!entry) return null;
+      const cfi = entry.ask_cfi || null;
+      const chapterIndex = asNumber(entry.ask_chapter_index, null);
+      const chapterPercent = asNumber(entry.ask_chapter_percent, null);
+      const positionIndex = asNumber(entry.position_context, null);
+      if (!cfi && chapterIndex == null && positionIndex == null) return null;
+      return {
+        cfi,
+        chapter_index: chapterIndex,
+        chapter_percent: chapterPercent,
+        position_index: positionIndex,
+      };
+    }
+
+    function updateQaContext(entry = null) {
+      const pos = state.currentPosition || {};
+      const chapter = chapterFromIndex(pos.chapter_index);
+      const chapterText = chapter ? `Chapter ${chapter.chapter_index + 1}` : 'current page';
+      const chapterPct = Math.round(asNumber(pos.chapter_percent, 0));
+      const fallback = `I know everything up to: ${chapterText}, ${chapterPct}%`;
+
+      const askLoc = askLocationForEntry(entry);
+      if (!askLoc) {
+        els.qaContextText.textContent = fallback;
+        els.qaAskLocationLink.classList.add('hidden');
+        return;
+      }
+
+      const label = chapterProgressLabel(askLoc.chapter_index, askLoc.chapter_percent);
+      els.qaContextText.textContent = `I know everything up to: ${label}`;
+      els.qaAskLocationLink.textContent = `↩ Back to ${label}`;
+      els.qaAskLocationLink.classList.remove('hidden');
+    }
+
+    function currentReaderCfi() {
+      if (state.rendition && typeof state.rendition.currentLocation === 'function') {
+        const location = state.rendition.currentLocation();
+        const cfi = location && location.start && location.start.cfi ? location.start.cfi : '';
+        if (cfi) return cfi;
+      }
+      return state.currentPosition && state.currentPosition.cfi ? String(state.currentPosition.cfi) : '';
+    }
+
+    function queueReaderLayoutRefresh(anchorCfi = '') {
+      clearTimeout(state.controlsLayoutTimer);
+      state.controlsLayoutTimer = setTimeout(async () => {
+        state.controlsLayoutTimer = null;
+        syncViewportMetrics();
+        if (!state.readerReady || !state.rendition) return;
+
+        const targetCfi = anchorCfi || currentReaderCfi();
+        try {
+          const rect = els.readerSurface.getBoundingClientRect();
+          const width = Math.max(1, Math.round(rect.width || 0));
+          const height = Math.max(1, Math.round(rect.height || 0));
+          if (typeof state.rendition.resize === 'function') {
+            state.rendition.resize(width, height);
+          }
+          if (targetCfi) {
+            await withTimeout(state.rendition.display(targetCfi), 15000, `display(${targetCfi})`);
+          }
+        } catch (err) {
+          console.warn('Failed to refresh reader layout after controls change', err);
+        }
+      }, 220);
+    }
+
+    function setControlsCollapsed(collapsed) {
+      const anchorCfi = currentReaderCfi();
+      const next = !!collapsed;
+      state.controlsCollapsed = next;
+      els.readerView.classList.toggle('controls-collapsed', next);
+      if (next) closeReaderPanels();
+      els.readerControlsToggle.textContent = next ? '▾' : '▴';
+      els.readerControlsToggle.title = next ? 'Expand controls' : 'Collapse controls';
+      syncViewportMetrics();
+      queueReaderLayoutRefresh(anchorCfi);
+    }
+
+    function closeReaderPanels() {
+      els.tocPanel.classList.remove('open');
+      els.bookmarksPanel.classList.remove('open');
+    }
+
+    function toggleReaderPanel(kind) {
+      const showToc = kind === 'toc' ? !els.tocPanel.classList.contains('open') : false;
+      const showBookmarks = kind === 'bookmarks' ? !els.bookmarksPanel.classList.contains('open') : false;
+      closeReaderPanels();
+      if (showToc) els.tocPanel.classList.add('open');
+      if (showBookmarks) els.bookmarksPanel.classList.add('open');
+    }
+
+    function applyCfiRangeHighlight(cfiRange) {
+      if (!state.rendition || !state.rendition.annotations || !cfiRange) return false;
+      try {
+        state.rendition.annotations.remove(cfiRange, 'highlight');
+      } catch (err) {
+        // ignore remove miss
+      }
+      try {
+        state.rendition.annotations.add('highlight', cfiRange, { source: 'citation' }, null, 'bw-cfi-highlight');
+        state.citationHighlightCleanups.push(() => {
+          try {
+            state.rendition.annotations.remove(cfiRange, 'highlight');
+          } catch (err) {
+            // ignore cleanup miss
+          }
+        });
+        return true;
+      } catch (err) {
+        return false;
+      }
+    }
+
+    function updateReaderSearchStatus(message = null) {
+      if (!els.readerSearchStatus) return;
+      if (message != null) {
+        els.readerSearchStatus.textContent = message;
+      } else if (!state.searchQuery) {
+        els.readerSearchStatus.textContent = '';
+      } else if (!state.searchMatches.length) {
+        els.readerSearchStatus.textContent = '0 matches';
+      } else {
+        const chapterIdx = asNumber(state.searchMatches[state.searchMatchIndex]?.chapter_index, null);
+        const chapter = Number.isFinite(chapterIdx) ? ` · Ch ${chapterIdx + 1}` : '';
+        els.readerSearchStatus.textContent = `${state.searchMatchIndex + 1}/${state.searchMatches.length}${chapter}`;
+      }
+      const hasMatches = state.searchMatches.length > 0;
+      els.readerSearchPrev.disabled = !hasMatches;
+      els.readerSearchNext.disabled = !hasMatches;
+    }
+
+    function resetReaderSearch(clearInput = false) {
+      state.searchQuery = '';
+      state.searchMatches = [];
+      state.searchMatchIndex = -1;
+      state.searchReturnCaptured = false;
+      state.searchMatchCfiCache = {};
+      if (clearInput && els.readerSearchInput) {
+        els.readerSearchInput.value = '';
+      }
+      updateReaderSearchStatus('');
+    }
+
+    async function jumpToSearchMatch(index) {
+      const total = state.searchMatches.length;
+      if (!total) return;
+      const nextIndex = ((index % total) + total) % total;
+      state.searchMatchIndex = nextIndex;
+      updateReaderSearchStatus();
+
+      const match = state.searchMatches[nextIndex];
+      if (!match) return;
+      if (!state.searchReturnCaptured) {
+        pushReturnPosition();
+      }
+
+      try {
+        state.suppressReturnDismissUntil = Date.now() + 1500;
+        clearCitationHighlights();
+        const cfi = await ensureSearchMatchCfi(match);
+        if (!cfi) {
+          showReaderStatusMessage('Search location unavailable for this match.');
+          return;
+        }
+        await withTimeout(state.rendition.display(cfi), 30000, `display(${cfi})`);
+        const highlighted = applyCfiRangeHighlight(cfi);
+        if (!highlighted) {
+          showReaderStatusMessage('Could not highlight this match.');
+        }
+        if (isCitationDebugEnabled()) {
+          console.info('Search jump resolved', {
+            query: state.searchQuery,
+            index: nextIndex + 1,
+            total,
+            match,
+            cfi,
+            visible_text_sample: captureVisibleTextSample(),
+          });
+        }
+      } catch (err) {
+        console.error('Search jump failed', err);
+        showReaderStatusMessage('Failed to navigate to search match.');
+      }
+      state.searchReturnCaptured = true;
+    }
+
+    async function runReaderSearch() {
+      if (!state.currentBookId) return;
+      const query = normalizeText(els.readerSearchInput.value || '');
+      if (query.length < 2) {
+        state.searchQuery = query;
+        state.searchMatches = [];
+        state.searchMatchIndex = -1;
+        state.searchReturnCaptured = false;
+        updateReaderSearchStatus('Type 2+ chars');
+        return;
+      }
+
+      updateReaderSearchStatus('Searching…');
+      const data = await fetchJson(`/api/books/${state.currentBookId}/search?q=${encodeURIComponent(query)}&limit=200`);
+      state.searchQuery = query;
+      state.searchMatches = Array.isArray(data.matches) ? data.matches : [];
+      state.searchMatchIndex = -1;
+      state.searchReturnCaptured = false;
+      state.searchMatchCfiCache = {};
+
+      if (!state.searchMatches.length) {
+        clearCitationHighlights();
+        updateReaderSearchStatus('0 matches');
+        return;
+      }
+
+      await jumpToSearchMatch(0);
+      updateReaderSearchStatus();
+    }
+
+    async function cycleReaderSearchMatch(delta) {
+      if (!state.searchMatches.length) return;
+      await jumpToSearchMatch(state.searchMatchIndex + delta);
+      updateReaderSearchStatus();
+    }
+
+    function currentPositionLabel() {
+      const pos = state.currentPosition || {};
+      const chapter = chapterFromIndex(pos.chapter_index);
+      const chapterLabel = chapter ? `Chapter ${chapter.chapter_index + 1}` : 'your page';
+      const chapterPct = Math.round(pos.chapter_percent || 0);
+      return `${chapterLabel}, ${chapterPct}%`;
+    }
+
+    function updateReturnControls() {
+      if (!state.returnStack.length) {
+        els.returnControls.classList.remove('open');
+        clearTimeout(state.returnDismissTimer);
+        return;
+      }
+      const top = state.returnStack[state.returnStack.length - 1];
+      els.returnBtn.textContent = `↩ Back to ${top.label}`;
+      els.returnControls.classList.add('open');
+    }
+
+    function clearReturnStack() {
+      clearCitationHighlights();
+      state.returnStack = [];
+      updateReturnControls();
+    }
+
+    function cfiFromSourcePosition(source) {
+      if (!state.ebook || !state.locationsReady || !source) return null;
+      const totalChunks = asNumber(state.currentBook && state.currentBook.total_chunks, 0);
+      const pos = asNumber(source.position_index, -1);
+      if (totalChunks <= 1 || pos < 0) return null;
+      const percentage = clamp(pos / Math.max(1, totalChunks - 1), 0, 0.9999);
+      try {
+        if (state.ebook.locations && typeof state.ebook.locations.cfiFromPercentage === 'function') {
+          return state.ebook.locations.cfiFromPercentage(percentage);
+        }
+      } catch (err) {
+        console.warn('Failed to derive CFI from source position', err);
+      }
+      return null;
+    }
+
+    function scheduleReturnDismiss() {
+      // Keep "return + citation highlight" state until the user explicitly chooses Back or Dismiss.
+    }
+
+    function pushReturnPosition() {
+      const cfi = state.currentPosition && state.currentPosition.cfi;
+      if (!cfi) return;
+      state.returnStack.push({
+        cfi,
+        label: currentPositionLabel(),
+      });
+      if (state.returnStack.length > 20) {
+        state.returnStack = state.returnStack.slice(state.returnStack.length - 20);
+      }
+      updateReturnControls();
+    }
+
+    function renderAnswerHtmlWithCitations(answer, sources) {
+      const safeSources = Array.isArray(sources) ? sources : [];
+      const rawAnswer = String(answer || '');
+      const chunkToIndex = new Map();
+      safeSources.forEach((source, idx) => {
+        if (source && source.chunk_id != null) {
+          chunkToIndex.set(String(source.chunk_id), idx);
+        }
+      });
+
+      const debug = {
+        mode: 'none',
+        canonical_markers: [],
+        canonical_resolved_chunk_ids: [],
+        canonical_unresolved_chunk_ids: [],
+        fallback_markers: [],
+        links: [],
+        source_map: safeSources.map((source, idx) => ({
+          index: idx + 1,
+          chunk_id: source && source.chunk_id != null ? source.chunk_id : null,
+          chapter_index: source && source.chapter_index != null ? source.chapter_index : null,
+          position_index: source && source.position_index != null ? source.position_index : null,
+          spine_href: source && source.spine_href ? source.spine_href : null,
+          canonical_start: source && source.canonical_start != null ? source.canonical_start : null,
+          canonical_end: source && source.canonical_end != null ? source.canonical_end : null,
+          cfi_range: source && source.cfi_range ? source.cfi_range : null,
+          anchor_text: source && source.anchor_text ? source.anchor_text : null,
+          snippet: source && source.snippet ? source.snippet : null,
+          debug_chunk_text: source && source.debug_chunk_text ? source.debug_chunk_text : null,
+        })),
+      };
+
+      const citationHtml = (idx, mode, marker) => {
+        const classes = mode === 'fallback' ? 'citation-link citation-link-fallback' : 'citation-link';
+        const markerAttr = escapeAttr(marker || '');
+        return `<a href="#" class="${classes}" data-source-idx="${idx}" data-citation-mode="${mode}" data-citation-marker="${markerAttr}">[${idx + 1}]</a>`;
+      };
+
+      const used = new Set();
+      const canonical = /\[c:([^\]]+)\]/gi;
+      let last = 0;
+      let match;
+      const parts = [];
+
+      while ((match = canonical.exec(rawAnswer)) !== null) {
+        parts.push(escapeHtml(rawAnswer.slice(last, match.index)));
+        const rawMarker = String(match[0] || '');
+        debug.canonical_markers.push(rawMarker);
+
+        const ids = [...String(match[1] || '').matchAll(/\d+/g)].map((m) => m[0]);
+        const links = [];
+        ids.forEach((id) => {
+          const idx = chunkToIndex.has(id) ? chunkToIndex.get(id) : -1;
+          if (idx >= 0) {
+            used.add(idx);
+            debug.canonical_resolved_chunk_ids.push(id);
+            debug.links.push({ mode: 'canonical', marker: rawMarker, source_index: idx + 1, chunk_id: id });
+            links.push(citationHtml(idx, 'canonical', rawMarker));
+          } else {
+            debug.canonical_unresolved_chunk_ids.push(id);
+          }
+        });
+
+        parts.push(links.length ? links.join(' ') : escapeHtml(rawMarker));
+        last = match.index + rawMarker.length;
+      }
+
+      parts.push(escapeHtml(rawAnswer.slice(last)));
+      let html = parts.join('');
+
+      if (used.size === 0) {
+        html = html.replace(/【\s*(\d+)\s*】|\[\s*(\d+)\s*\]|\(\s*(\d+)\s*\)/g, (full, a, b, c) => {
+          const marker = String(full || '');
+          const num = parseInt(a || b || c, 10);
+          if (!Number.isFinite(num)) return full;
+          const idx = num - 1;
+          if (idx < 0 || idx >= safeSources.length) return full;
+          debug.fallback_markers.push(marker);
+          debug.links.push({
+            mode: 'fallback',
+            marker,
+            source_index: idx + 1,
+            chunk_id: safeSources[idx] && safeSources[idx].chunk_id != null ? safeSources[idx].chunk_id : null,
+          });
+          return citationHtml(idx, 'fallback', marker);
+        });
+      }
+
+      if (debug.links.length) {
+        debug.mode = debug.links.every((link) => link.mode === 'canonical') ? 'canonical' : 'fallback';
+      } else if (debug.canonical_markers.length) {
+        debug.mode = 'canonical_unresolved';
+      }
+
+      return { html, debug };
+    }
+
+    function formatCitationDebugText(debug) {
+      if (!debug) return 'No citation debug data.';
+      const lines = [];
+      const fullText = (text) => {
+        const normalized = normalizeText(text || '');
+        if (!normalized) return '(none)';
+        return normalized;
+      };
+      lines.push(`mode: ${debug.mode || 'none'}`);
+      lines.push(`canonical markers: ${(debug.canonical_markers || []).join(' | ') || '(none)'}`);
+      lines.push(`canonical resolved IDs: ${(debug.canonical_resolved_chunk_ids || []).join(', ') || '(none)'}`);
+      lines.push(`canonical unresolved IDs: ${(debug.canonical_unresolved_chunk_ids || []).join(', ') || '(none)'}`);
+      lines.push(`fallback markers: ${(debug.fallback_markers || []).join(' | ') || '(none)'}`);
+
+      lines.push('links:');
+      if (Array.isArray(debug.links) && debug.links.length) {
+        debug.links.forEach((link) => {
+          lines.push(`  - [${link.source_index}] mode=${link.mode} marker=${link.marker} chunk_id=${link.chunk_id ?? 'null'}`);
+        });
+      } else {
+        lines.push('  - (none)');
+      }
+
+      lines.push('source map:');
+      if (Array.isArray(debug.source_map) && debug.source_map.length) {
+        debug.source_map.forEach((source) => {
+          const textPreview = fullText(source.debug_chunk_text || source.anchor_text || source.snippet || '');
+          const chapterIdx = Number.isFinite(Number(source.chapter_index)) ? Number(source.chapter_index) : null;
+          const chapterHuman = chapterIdx == null ? 'null' : String(chapterIdx + 1);
+          lines.push(
+            `  - [${source.index}] chunk_id=${source.chunk_id ?? 'null'} chapter=${chapterHuman} (idx=${source.chapter_index ?? 'null'}) pos=${source.position_index ?? 'null'} spine=${source.spine_href || 'null'} canon=${source.canonical_start ?? 'null'}..${source.canonical_end ?? 'null'} cfi=${source.cfi_range || 'null'}`
+          );
+          lines.push(`    text: ${textPreview}`);
+        });
+      } else {
+        lines.push('  - (none)');
+      }
+
+      return lines.join('\n');
+    }
+
+    function tryHighlightSourceAnchor(anchorText, options = null) {
+      if (!state.rendition || !anchorText) return false;
+      const contents = state.rendition.getContents ? state.rendition.getContents() : [];
+
+      for (const content of contents) {
+        const doc = content && content.document ? content.document : null;
+        if (!doc || !doc.body) continue;
+        if (tryHighlightInElement(doc.body, anchorText, options)) return true;
+      }
+      return false;
+    }
+
+    function findCfiForSourceText(sourceText, options = null) {
+      const opts = options || {};
+      if (!state.rendition || !sourceText) return null;
+      const phrases = buildHighlightPhrases(sourceText, opts);
+      if (!phrases.length) return null;
+
+      const contents = state.rendition.getContents ? state.rendition.getContents() : [];
+      for (const content of contents) {
+        const doc = content && content.document ? content.document : null;
+        if (!doc || !doc.body) continue;
+
+        const index = buildTextNodeIndex(doc.body);
+        if (!index) continue;
+
+        for (const phrase of phrases) {
+          const segments = findPhraseSegments(index, phrase, opts.literal ? 1 : 6);
+          if (!segments.length) continue;
+
+          try {
+            if (typeof content.cfiFromRange === 'function') {
+              const first = segments[0];
+              const last = segments[segments.length - 1];
+              const range = doc.createRange();
+              range.setStart(first.node, first.startOffset);
+              range.setEnd(last.node, last.endOffset);
+              const cfi = content.cfiFromRange(range);
+              if (cfi) return cfi;
+            }
+          } catch (err) {
+            console.warn('Failed deriving CFI for source text range', err);
+          }
+        }
+      }
+      return null;
+    }
+
+    function sourceTextForMatching(source) {
+      if (!source) return '';
+      return normalizeText(
+        [source.debug_chunk_text, source.anchor_text, source.snippet]
+          .filter(Boolean)
+          .join(' ')
+      );
+    }
+
+    function normalizeSpineHref(href) {
+      return String(href || '').split('#')[0];
+    }
+
+    function spineHrefMatches(a, b) {
+      const left = normalizeSpineHref(a);
+      const right = normalizeSpineHref(b);
+      if (!left || !right) return false;
+      if (left === right) return true;
+      return left.endsWith(`/${right}`) || right.endsWith(`/${left}`);
+    }
+
+    function currentDisplayedSpineHref() {
+      if (!state.rendition || typeof state.rendition.currentLocation !== 'function') return '';
+      const location = state.rendition.currentLocation();
+      const href = location && location.start && location.start.href ? location.start.href : '';
+      return normalizeSpineHref(href);
+    }
+
+    function renderedContentForSpine(spineHref) {
+      if (!state.rendition || !state.rendition.getContents) return null;
+      const contents = state.rendition.getContents() || [];
+      if (!contents.length) return null;
+      if (!spineHref) return contents[0];
+      const hit = contents.find((content) => {
+        const href = content && content.section ? content.section.href : '';
+        return spineHrefMatches(href, spineHref);
+      });
+      return hit || contents[0];
+    }
+
+    function matchSpanFromIndex(index, phrase, fromChar = 0, minWords = 1) {
+      if (!index || !phrase) return null;
+      const words = String(phrase || '').split(' ').filter(Boolean);
+      if (words.length < Math.max(1, asNumber(minWords, 1))) return null;
+      const regex = new RegExp(words.map((w) => escapeRegex(w)).join('[^a-z0-9]+'), 'ig');
+      regex.lastIndex = Math.max(0, Math.floor(asNumber(fromChar, 0)));
+      const match = regex.exec(index.textLower);
+      if (!match) return null;
+      return { start: match.index, end: match.index + match[0].length };
+    }
+
+    function rangeFromCharSpan(doc, index, startChar, endChar) {
+      if (!doc || !index || !Array.isArray(index.charMap)) return null;
+      const start = Math.max(0, Math.floor(asNumber(startChar, 0)));
+      const end = Math.max(start + 1, Math.floor(asNumber(endChar, start + 1)));
+      let startRef = null;
+      let endRef = null;
+
+      for (let i = start; i < end; i += 1) {
+        if (index.charMap[i]) {
+          startRef = index.charMap[i];
+          break;
+        }
+      }
+      for (let i = end - 1; i >= start; i -= 1) {
+        if (index.charMap[i]) {
+          endRef = index.charMap[i];
+          break;
+        }
+      }
+      if (!startRef || !endRef) return null;
+
+      try {
+        const range = doc.createRange();
+        range.setStart(startRef.node, startRef.offset);
+        range.setEnd(endRef.node, endRef.offset + 1);
+        return range;
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function canonicalizeText(text) {
+      return String(text || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '');
+    }
+
+    function searchMatchCacheKey(match) {
+      if (!match) return '';
+      const chapter = asNumber(match.chapter_index, -1);
+      const start = asNumber(match.match_canonical_start, -1);
+      const end = asNumber(match.match_canonical_end, -1);
+      const spine = normalizeSpineHref(match.spine_href || '');
+      if (chapter < 0 || start < 0 || end <= start) return '';
+      return `${chapter}:${start}:${end}:${spine}`;
+    }
+
+    function chunkCanonicalBounds(chunk) {
+      const start = asNumber(chunk && chunk.canonical_start, null);
+      const end = asNumber(chunk && chunk.canonical_end, null);
+      if (start == null || end == null) return null;
+      const normStart = Math.max(0, Math.floor(start));
+      const normEnd = Math.max(0, Math.floor(end));
+      if (normEnd <= normStart) return null;
+      return { start: normStart, end: normEnd };
+    }
+
+    function buildCanonicalIndex(index) {
+      if (!index || !Array.isArray(index.charMap) || !index.textLower) return null;
+      const chars = [];
+      const refs = [];
+      for (let i = 0; i < index.textLower.length; i += 1) {
+        const ch = index.textLower[i];
+        if (!index.charMap[i]) continue;
+        if (!/[a-z0-9]/.test(ch)) continue;
+        chars.push(ch);
+        refs.push(i);
+      }
+      if (!chars.length || !refs.length) return null;
+      return { text: chars.join(''), refs };
+    }
+
+    function cfiFromCanonicalRange(content, canonicalStart, canonicalEnd) {
+      const doc = content && content.document ? content.document : null;
+      if (!doc || !doc.body || typeof content.cfiFromRange !== 'function') return null;
+      const index = buildTextNodeIndex(doc.body);
+      if (!index) return null;
+      const canonicalIndex = buildCanonicalIndex(index);
+      if (!canonicalIndex) return null;
+
+      const start = Math.max(0, Math.floor(asNumber(canonicalStart, -1)));
+      const end = Math.max(start + 1, Math.floor(asNumber(canonicalEnd, start + 1)));
+      if (start < 0 || start >= canonicalIndex.refs.length) return null;
+      const boundedEnd = Math.min(end, canonicalIndex.refs.length);
+      if (boundedEnd <= start) return null;
+
+      const startChar = canonicalIndex.refs[start];
+      const endCharExclusive = canonicalIndex.refs[boundedEnd - 1] + 1;
+      const domRange = rangeFromCharSpan(doc, index, startChar, endCharExclusive);
+      if (!domRange) return null;
+      try {
+        return content.cfiFromRange(domRange);
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function computeChunkCfiUpdatesForContent(content, chunks) {
+      const doc = content && content.document ? content.document : null;
+      if (!doc || !doc.body || typeof content.cfiFromRange !== 'function') return [];
+      const index = buildTextNodeIndex(doc.body);
+      if (!index) return [];
+      const canonicalIndex = buildCanonicalIndex(index);
+      if (!canonicalIndex) return [];
+
+      const ordered = [...chunks].sort((a, b) => {
+        const aStart = asNumber(a && a.canonical_start, Number.POSITIVE_INFINITY);
+        const bStart = asNumber(b && b.canonical_start, Number.POSITIVE_INFINITY);
+        if (aStart !== bStart) return aStart - bStart;
+        return asNumber(a && a.position_index, 0) - asNumber(b && b.position_index, 0);
+      });
+      const updates = [];
+
+      ordered.forEach((chunk) => {
+        const bounds = chunkCanonicalBounds(chunk);
+        if (!bounds) return;
+        if (bounds.start >= canonicalIndex.refs.length) return;
+        const boundedEnd = Math.min(bounds.end, canonicalIndex.text.length);
+        const endInCanonical = boundedEnd - 1;
+        if (endInCanonical < bounds.start || endInCanonical >= canonicalIndex.refs.length) return;
+
+        const canonicalChunk = canonicalizeText(chunk && chunk.text ? chunk.text : '');
+        if (!canonicalChunk) return;
+        const slice = canonicalIndex.text.slice(bounds.start, boundedEnd);
+        if (slice !== canonicalChunk) return;
+
+        const startChar = canonicalIndex.refs[bounds.start];
+        const endCharExclusive = canonicalIndex.refs[endInCanonical] + 1;
+        const domRange = rangeFromCharSpan(doc, index, startChar, endCharExclusive);
+        if (!domRange) return;
+
+        try {
+          const cfi = content.cfiFromRange(domRange);
+          if (!cfi) return;
+          updates.push({ chunk_id: chunk.id, cfi_range: cfi });
+        } catch (err) {
+          // Skip chunks that fail to convert to CFI.
+        }
+      });
+
+      return updates;
+    }
+
+    function applyCfiUpdatesInMemory(updates) {
+      if (!Array.isArray(updates) || !updates.length) return;
+      const byId = new Map();
+      updates.forEach((u) => {
+        if (!u || u.chunk_id == null) return;
+        byId.set(asNumber(u.chunk_id, -1), u.cfi_range || null);
+      });
+      if (!byId.size) return;
+
+      Object.keys(state.chapterChunkCache || {}).forEach((chapterKey) => {
+        const list = state.chapterChunkCache[chapterKey] || [];
+        list.forEach((chunk) => {
+          const id = asNumber(chunk.id, -1);
+          if (byId.has(id)) chunk.cfi_range = byId.get(id) || null;
+        });
+      });
+
+      (state.answerHistory || []).forEach((entry) => {
+        const sources = Array.isArray(entry.sources) ? entry.sources : [];
+        sources.forEach((source) => {
+          const id = asNumber(source.chunk_id, -1);
+          if (byId.has(id)) source.cfi_range = byId.get(id) || null;
+        });
+      });
+
+      (state.searchMatches || []).forEach((match) => {
+        const id = asNumber(match.chunk_id, -1);
+        if (byId.has(id)) match.cfi_range = byId.get(id) || null;
+      });
+    }
+
+    async function fetchChapterChunks(chapterIndex) {
+      const key = String(chapterIndex);
+      if (Array.isArray(state.chapterChunkCache[key])) return state.chapterChunkCache[key];
+      const data = await fetchJson(`/api/books/${state.currentBookId}/chapters/${chapterIndex}/chunks`);
+      const chunks = Array.isArray(data.chunks) ? data.chunks : [];
+      state.chapterChunkCache[key] = chunks;
+      return chunks;
+    }
+
+    async function ensureSourceCfiRange(source) {
+      if (!state.currentBookId || !source) return null;
+
+      const chapterIndex = asNumber(source.chapter_index, null);
+      if (chapterIndex == null) return null;
+      const chapterKey = String(chapterIndex);
+
+      const hydrateFromCache = () => {
+        const chapterCached = state.chapterChunkCache[chapterKey] || [];
+        const hit = chapterCached.find((c) => asNumber(c.id, -1) === asNumber(source.chunk_id, -1));
+        if (!hit) return;
+        source.cfi_range = hit.cfi_range || null;
+        if (source.canonical_start == null && hit.canonical_start != null) source.canonical_start = hit.canonical_start;
+        if (source.canonical_end == null && hit.canonical_end != null) source.canonical_end = hit.canonical_end;
+      };
+      if (state.chapterCfiVerified[chapterKey]) {
+        hydrateFromCache();
+        return source.cfi_range || null;
+      }
+
+      const existingPromise = state.chapterCfiBuildInFlight[chapterKey];
+      if (existingPromise) {
+        await existingPromise;
+        hydrateFromCache();
+        return source.cfi_range || null;
+      }
+
+      const buildPromise = (async () => {
+        const chunks = await fetchChapterChunks(chapterIndex);
+        if (!chunks.length) return;
+
+        const targetSpine =
+          normalizeSpineHref(source.spine_href) ||
+          normalizeSpineHref(chunks[0] && chunks[0].spine_href);
+        if (!targetSpine) return;
+
+        await withTimeout(state.rendition.display(targetSpine), 30000, `display(${targetSpine})`);
+        const content = renderedContentForSpine(targetSpine);
+        if (!content || !content.document || typeof content.cfiFromRange !== 'function') return;
+
+        const sameSpineChunks = chunks.filter((c) => spineHrefMatches(c.spine_href, targetSpine));
+        if (!sameSpineChunks.length) return;
+
+        const computableChunks = sameSpineChunks.filter((c) => !!chunkCanonicalBounds(c));
+        const computed = computeChunkCfiUpdatesForContent(content, computableChunks);
+        const computedById = new Map();
+        computed.forEach((u) => {
+          computedById.set(asNumber(u.chunk_id, -1), u.cfi_range || null);
+        });
+        const updates = sameSpineChunks.map((chunk) => {
+          const id = asNumber(chunk.id, -1);
+          return {
+            chunk_id: id,
+            cfi_range: computedById.has(id) ? computedById.get(id) : null,
+          };
+        });
+
+        await fetchJson(`/api/books/${state.currentBookId}/chunks/cfi`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates }),
+        });
+        applyCfiUpdatesInMemory(updates);
+      })();
+
+      state.chapterCfiBuildInFlight[chapterKey] = buildPromise;
+      try {
+        await buildPromise;
+        state.chapterCfiVerified[chapterKey] = true;
+      } finally {
+        delete state.chapterCfiBuildInFlight[chapterKey];
+      }
+      hydrateFromCache();
+      return source.cfi_range || null;
+    }
+
+    async function ensureSearchMatchCfi(match) {
+      if (!match || !state.rendition) return null;
+      if (match.match_cfi_range) return match.match_cfi_range;
+
+      const key = searchMatchCacheKey(match);
+      if (key && state.searchMatchCfiCache[key]) {
+        match.match_cfi_range = state.searchMatchCfiCache[key];
+        return match.match_cfi_range;
+      }
+
+      const start = asNumber(match.match_canonical_start, null);
+      const end = asNumber(match.match_canonical_end, null);
+      if (start == null || end == null || end <= start) return null;
+
+      const targetSpine = normalizeSpineHref(match.spine_href);
+      if (!targetSpine) return null;
+
+      await withTimeout(state.rendition.display(targetSpine), 30000, `display(${targetSpine})`);
+      const content = renderedContentForSpine(targetSpine);
+      if (!content) return null;
+
+      const cfi = cfiFromCanonicalRange(content, start, end);
+      if (!cfi) return null;
+      match.match_cfi_range = cfi;
+      if (key) state.searchMatchCfiCache[key] = cfi;
+      return cfi;
+    }
+
+    async function seekHighlightAcrossPages(sourceText, sourceSpineHref, maxSteps, options = null) {
+      if (!sourceText || !state.rendition) return false;
+      const targetSpine = normalizeSpineHref(sourceSpineHref);
+      const steps = Math.max(0, Math.floor(asNumber(maxSteps, 0)));
+
+      for (let step = 0; step <= steps; step += 1) {
+        if (tryHighlightSourceAnchor(sourceText, options)) return true;
+        if (step === steps) break;
+
+        try {
+          await withTimeout(state.rendition.next(), 15000, 'next()');
+        } catch (err) {
+          return false;
+        }
+
+        if (targetSpine) {
+          const currentSpine = currentDisplayedSpineHref();
+          if (currentSpine && currentSpine !== targetSpine) return false;
+        }
+      }
+      return false;
+    }
+
+    function captureVisibleTextSample(maxChars = 360) {
+      if (!state.rendition) return '';
+      const contents = state.rendition.getContents ? state.rendition.getContents() : [];
+      const parts = [];
+      contents.forEach((content) => {
+        const doc = content && content.document ? content.document : null;
+        if (!doc || !doc.body) return;
+        const text = normalizeText(doc.body.innerText || doc.body.textContent || '');
+        if (text) parts.push(text);
+      });
+      const merged = normalizeText(parts.join(' '));
+      if (!merged) return '';
+      if (merged.length <= maxChars) return merged;
+      return `${merged.slice(0, maxChars)}…`;
+    }
+
+    async function jumpToSource(source, citationContext = null, options = null) {
+      if (!state.readerReady || !state.rendition || !source) return;
+      const opts = options || {};
+      const highlightOptions = opts.literalHighlight ? { literal: true } : {};
+      const deterministicOnly = opts.deterministicOnly !== false && !opts.literalHighlight;
+      clearCitationHighlights();
+      const originCfi = state.currentPosition && state.currentPosition.cfi ? state.currentPosition.cfi : null;
+
+      const chapterIndex = asNumber(source.chapter_index, null);
+      const chapterKey = chapterIndex == null ? null : String(chapterIndex);
+      const shouldEnsureDeterministic = deterministicOnly || !source.cfi_range || (chapterKey && !state.chapterCfiVerified[chapterKey]);
+      if (shouldEnsureDeterministic) {
+        try {
+          await ensureSourceCfiRange(source);
+        } catch (err) {
+          console.warn('Failed to build deterministic CFI for source chunk', err);
+        }
+      }
+
+      if (deterministicOnly && !source.cfi_range) {
+        if (originCfi) {
+          try {
+            await withTimeout(state.rendition.display(originCfi), 30000, `display(${originCfi})`);
+          } catch (err) {
+            // ignore restore failures
+          }
+        }
+        showReaderStatusMessage('Citation location unavailable for this chunk.');
+        if (isCitationDebugEnabled()) {
+          console.info('Citation jump aborted (no deterministic CFI)', {
+            citation_context: citationContext,
+            source,
+          });
+        }
+        return;
+      }
+
+      const targets = [];
+      const addTarget = (t) => {
+        if (!t) return;
+        if (!targets.includes(t)) targets.push(t);
+      };
+      addTarget(source.cfi_range);
+      if (!deterministicOnly) {
+        addTarget(source.spine_href);
+        addTarget(source.cfi);
+        addTarget(cfiFromSourcePosition(source));
+      }
+      if (!targets.length) return;
+
+      const sourceText = normalizeText(opts.highlightText || sourceTextForMatching(source));
+
+      if (isCitationDebugEnabled()) {
+        console.info('Citation jump request', {
+          citation_context: citationContext,
+          source,
+          targets,
+          source_text_preview: sourceText.slice(0, 260),
+        });
+      }
+
+      if (opts.pushReturn !== false) {
+        pushReturnPosition();
+      }
+      if (opts.closeQa !== false) {
+        closeQaPanel();
+      }
+
+      try {
+        state.suppressReturnDismissUntil = Date.now() + 1500;
+        let displayed = false;
+        let displayedTarget = null;
+        let didHighlight = false;
+
+        for (const target of targets) {
+          try {
+            await withTimeout(state.rendition.display(target), 30000, `display(${target})`);
+            displayed = true;
+            displayedTarget = target;
+
+            if (!opts.literalHighlight && source.cfi_range && target === source.cfi_range) {
+              didHighlight = applyCfiRangeHighlight(source.cfi_range);
+              if (didHighlight) {
+                break;
+              }
+            }
+
+            if (opts.literalHighlight && sourceText) {
+              const literalCfi = findCfiForSourceText(sourceText, { literal: true });
+              if (literalCfi) {
+                didHighlight = applyCfiRangeHighlight(literalCfi);
+              }
+              break;
+            }
+
+            if (deterministicOnly) {
+              break;
+            }
+
+            if (!sourceText) {
+              break;
+            }
+
+            const scanDepth = target === source.spine_href ? 72 : 10;
+            didHighlight = await seekHighlightAcrossPages(sourceText, source.spine_href, scanDepth, highlightOptions);
+            if (didHighlight) {
+              break;
+            }
+
+            const cfi = findCfiForSourceText(sourceText, highlightOptions);
+            if (cfi && cfi !== target) {
+              await withTimeout(state.rendition.display(cfi), 30000, `display(${cfi})`);
+              displayedTarget = cfi;
+              didHighlight = await seekHighlightAcrossPages(sourceText, source.spine_href, 10, highlightOptions);
+              if (didHighlight) {
+                break;
+              }
+            }
+          } catch (err) {
+            console.warn('Source target display failed, trying fallback target', target, err);
+          }
+        }
+        if (!displayed) {
+          throw new Error('All source targets failed');
+        }
+        if (!didHighlight && !opts.literalHighlight && source.cfi_range) {
+          didHighlight = applyCfiRangeHighlight(source.cfi_range);
+        }
+        if (!didHighlight && !deterministicOnly && !opts.literalHighlight && sourceText) {
+          didHighlight = await seekHighlightAcrossPages(sourceText, source.spine_href, 10, highlightOptions);
+        }
+        if (isCitationDebugEnabled()) {
+          console.info('Citation jump resolved', {
+            citation_context: citationContext,
+            source,
+            targets,
+            displayed_target: displayedTarget,
+            highlighted: didHighlight,
+            visible_text_sample: captureVisibleTextSample(),
+          });
+        }
+      } catch (err) {
+        console.error('Failed to jump to citation source', err);
+      }
+    }
+
+    async function returnToReading() {
+      if (!state.returnStack.length || !state.rendition) return;
+      const target = state.returnStack.pop();
+      updateReturnControls();
+      if (!target || !target.cfi) return;
+      try {
+        clearCitationHighlights();
+        state.suppressReturnDismissUntil = Date.now() + 1500;
+        await withTimeout(state.rendition.display(target.cfi), 30000, `display(${target.cfi})`);
+      } catch (err) {
+        console.error('Failed to return to saved position', err);
+      }
+    }
+
+    function getBookIdFromPath() {
+      const m = window.location.pathname.match(/^\/read\/(\d+)$/);
+      return m ? parseInt(m[1], 10) : null;
+    }
+
+    function navigate(path) {
+      if (window.location.pathname === path) return;
+      history.pushState({}, '', path);
+      route();
+    }
+
+    function showLibrary() {
+      els.libraryView.classList.remove('hidden');
+      els.readerView.classList.add('hidden');
+      closeReaderPanels();
+      closeQaPanel();
+      els.readerStatus.classList.remove('visible');
+      els.readerStatus.textContent = '';
+      clearReturnStack();
+    }
+
+    function showReader() {
+      els.libraryView.classList.add('hidden');
+      els.readerView.classList.remove('hidden');
+      requestAnimationFrame(syncViewportMetrics);
+    }
+
+    async function fetchJson(url, options) {
+      const res = await fetch(url, options);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || 'Request failed');
+      }
+      return data;
+    }
+
+    async function loadSettings() {
+      const data = await fetchJson('/api/settings');
+      state.settings = data;
+
+      els.currentKey.textContent = data.has_key
+        ? `Current key: ${data.api_key}`
+        : 'No API key configured.';
+
+      els.modelSelect.innerHTML = '';
+      els.qaModelSelect.innerHTML = '';
+      (data.models || []).forEach((model) => {
+        const optA = document.createElement('option');
+        optA.value = model;
+        optA.textContent = model;
+        els.modelSelect.appendChild(optA);
+
+        const optB = document.createElement('option');
+        optB.value = model;
+        optB.textContent = model;
+        els.qaModelSelect.appendChild(optB);
+      });
+
+      els.modelSelect.value = data.model;
+      els.qaModelSelect.value = data.model;
+      els.fontSizeInput.value = data.reader_font_size;
+      const spread = data.reader_spread || 'single';
+      setReaderSpread(spread, false);
+      applyReaderFontSize(data.reader_font_size);
+
+      const widthMin = asNumber(data.reader_width_px_min, 760);
+      const widthMax = asNumber(data.reader_width_px_max, 1320);
+      els.readerWidthInput.min = String(widthMin);
+      els.readerWidthInput.max = String(widthMax);
+      applyReaderWidth(asNumber(data.reader_width_px, 980));
+
+      const bottomMin = asNumber(data.reader_bottom_padding_px_min, 12);
+      const bottomMax = asNumber(data.reader_bottom_padding_px_max, 120);
+      els.readerBottomPaddingInput.min = String(bottomMin);
+      els.readerBottomPaddingInput.max = String(bottomMax);
+      applyReaderBottomPadding(asNumber(data.reader_bottom_padding_px, 34));
+      els.citationDebugInput.checked = !!data.citation_debug_mode;
+      renderAnswerHistory();
+    }
+
+    async function saveSettings() {
+      const payload = {
+        model: els.modelSelect.value,
+        reader_font_size: clamp(parseInt(els.fontSizeInput.value || '100', 10), 70, 160),
+        reader_spread: els.spreadSelect.value,
+        reader_width_px: Math.round(asNumber(els.readerWidthInput.value, 980)),
+        reader_bottom_padding_px: Math.round(asNumber(els.readerBottomPaddingInput.value, 34)),
+        citation_debug_mode: !!els.citationDebugInput.checked,
+      };
+
+      const key = els.apiKeyInput.value.trim();
+      if (key) payload.api_key = key;
+
+      const data = await fetchJson('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chapter_index: chapterIndex, percent })
+        body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      alert('Position set: ' + data.position_index);
+
+      state.settings = data;
+      els.qaModelSelect.value = data.model;
+      applyReaderFontSize(data.reader_font_size);
+      setReaderSpread(data.reader_spread || 'single', false);
+      applyReaderWidth(asNumber(data.reader_width_px, 980));
+      applyReaderBottomPadding(asNumber(data.reader_bottom_padding_px, 34));
+      els.citationDebugInput.checked = !!data.citation_debug_mode;
+      renderAnswerHistory();
+      closeSettings();
+      els.apiKeyInput.value = '';
+    }
+
+    function openSettings() {
+      if (!state.settings) return;
+      els.modelSelect.value = state.settings.model;
+      els.fontSizeInput.value = state.settings.reader_font_size;
+      els.spreadSelect.value = state.settings.reader_spread || 'single';
+      applyReaderWidth(asNumber(state.settings.reader_width_px, 980));
+      applyReaderBottomPadding(asNumber(state.settings.reader_bottom_padding_px, 34));
+      els.citationDebugInput.checked = !!state.settings.citation_debug_mode;
+      els.apiKeyInput.value = '';
+      els.settingsModal.classList.add('open');
+      els.apiKeyInput.focus();
+    }
+
+    function closeSettings() {
+      els.settingsModal.classList.remove('open');
+    }
+
+    async function loadBooks() {
+      const data = await fetchJson('/api/books');
+      state.books = data.books || [];
+      renderBooks();
+    }
+
+    function buildCover(book) {
+      const wrap = document.createElement('div');
+      const img = document.createElement('img');
+      img.className = 'book-cover';
+      img.loading = 'lazy';
+      img.alt = `Cover for ${book.title}`;
+      img.src = `/api/books/${book.id}/cover`;
+      img.onerror = () => {
+        const fallback = document.createElement('div');
+        fallback.className = 'book-cover fallback';
+        fallback.textContent = book.title || 'Untitled';
+        wrap.replaceChildren(fallback);
+      };
+      wrap.appendChild(img);
+      return wrap;
+    }
+
+    function renderBooks() {
+      els.booksGrid.innerHTML = '';
+
+      if (!state.books.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        empty.innerHTML = '<strong>Drop an EPUB to start reading.</strong><br />Imports and indexing happen locally on this machine.';
+        els.booksGrid.appendChild(empty);
+        return;
+      }
+
+      state.books.forEach((book) => {
+        const card = document.createElement('article');
+        card.className = 'book-card';
+
+        const del = document.createElement('button');
+        del.className = 'book-delete';
+        del.title = 'Delete book';
+        del.textContent = '×';
+        del.addEventListener('click', async (event) => {
+          event.stopPropagation();
+          const ok = confirm(`Delete \"${book.title}\" and all associated data?`);
+          if (!ok) return;
+          try {
+            const res = await fetch(`/api/books/${book.id}`, { method: 'DELETE' });
+            if (!res.ok) {
+              const err = await res.json();
+              throw new Error(err.detail || 'Delete failed');
+            }
+            await loadBooks();
+          } catch (err) {
+            alert(`Delete failed: ${err.message}`);
+          }
+        });
+        card.appendChild(del);
+
+        const cover = buildCover(book);
+        card.appendChild(cover);
+
+        const meta = document.createElement('div');
+        meta.className = 'book-meta';
+
+        const title = document.createElement('h3');
+        title.className = 'book-title';
+        title.textContent = book.title || 'Untitled';
+
+        const author = document.createElement('p');
+        author.className = 'book-author';
+        author.textContent = book.author || 'Unknown';
+
+        const chapterLabel = (book.chapter_index != null)
+          ? `Chapter ${book.chapter_index + 1}${book.chapter_title ? ` · ${book.chapter_title}` : ''}`
+          : 'Not started';
+
+        const progress = Number(book.book_percent || 0);
+        const sub = document.createElement('p');
+        sub.className = 'book-sub';
+        sub.textContent = `${Math.round(progress)}% · ${chapterLabel}`;
+
+        const last = document.createElement('p');
+        last.className = 'book-sub';
+        last.textContent = relativeTime(book.last_read_at);
+
+        const status = document.createElement('div');
+        if (book.embedding_status === 'processing') {
+          status.innerHTML = '<span class="status-pill">Indexing...</span>';
+        } else if (book.embedding_status === 'failed') {
+          status.innerHTML = '<span class="status-pill" style="background:#cc6b5a;color:#240f0b;">Index failed</span>';
+        }
+
+        const progressBar = document.createElement('div');
+        progressBar.className = 'book-progress';
+        progressBar.innerHTML = `<span style="width:${clamp(progress, 0, 100)}%"></span>`;
+
+        meta.append(title, author, sub, last, status, progressBar);
+        card.appendChild(meta);
+        card.onclick = () => navigate(`/read/${book.id}`);
+
+        els.booksGrid.appendChild(card);
+      });
+    }
+
+    async function importBook(file) {
+      if (!file) return;
+      const form = new FormData();
+      form.append('file', file);
+      els.importStatus.textContent = 'Importing and indexing…';
+
+      try {
+        const res = await fetch('/api/books/import', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Import failed');
+        els.importStatus.textContent = `Imported “${data.title}” (${data.total_chunks} chunks).`;
+        await loadBooks();
+      } catch (err) {
+        els.importStatus.textContent = `Import failed: ${err.message}`;
+      }
+    }
+
+    function destroyReader() {
+      clearTimeout(state.controlsLayoutTimer);
+      state.controlsLayoutTimer = null;
+      if (state.rendition) {
+        try { state.rendition.destroy(); } catch (e) {}
+      }
+      if (state.ebook) {
+        try { state.ebook.destroy(); } catch (e) {}
+      }
+      state.rendition = null;
+      state.ebook = null;
+      state.readerReady = false;
+      state.locationsReady = false;
+      els.readerSurface.innerHTML = '';
+      els.readerStatus.classList.remove('visible');
+      els.readerStatus.textContent = '';
+      els.turnLeft.classList.add('disabled');
+      els.turnRight.classList.add('disabled');
+      els.prevPageBtn.disabled = true;
+      els.nextPageBtn.disabled = true;
+      els.chapterJumpSelect.disabled = true;
+      els.chapterJumpSelect.value = '';
+      clearReturnStack();
+      resetReaderSearch(true);
+      closeReaderPanels();
+      state.chapterChunkCache = {};
+      state.chapterCfiBuildInFlight = {};
+      state.chapterCfiVerified = {};
+      state.searchMatchCfiCache = {};
+      state.tocItems = [];
+      state.bookmarks = [];
+      renderTocList();
+      renderBookmarks();
+      els.bookmarksBtn.disabled = true;
+      updateBookmarkToggleState();
+    }
+
+    function chapterFromIndex(index) {
+      if (!state.chapters.length || index == null) return null;
+      return state.chapters.find((ch) => ch.chapter_index === index) || null;
+    }
+
+    function chapterLabel(chapter) {
+      if (!chapter) return '';
+      const idx = Number.isInteger(chapter.chapter_index) ? chapter.chapter_index + 1 : null;
+      const rawTitle = normalizeText(chapter.title || '');
+      if (!idx) return rawTitle || 'Chapter';
+      if (!rawTitle) return `Chapter ${idx}`;
+      if (/^chapter\s+\d+$/i.test(rawTitle)) return rawTitle;
+      return `Chapter ${idx} · ${rawTitle}`;
+    }
+
+    function renderChapterJumpOptions() {
+      const select = els.chapterJumpSelect;
+      if (!select) return;
+      const current = select.value;
+      select.innerHTML = '';
+
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Chapters';
+      select.appendChild(placeholder);
+
+      (state.chapters || []).forEach((ch) => {
+        const opt = document.createElement('option');
+        opt.value = String(ch.chapter_index);
+        opt.textContent = chapterLabel(ch);
+        select.appendChild(opt);
+      });
+
+      if (current && [...select.options].some((o) => o.value === current)) {
+        select.value = current;
+      }
+      select.disabled = !state.chapters.length;
+    }
+
+    function syncChapterJumpToPosition() {
+      const select = els.chapterJumpSelect;
+      if (!select) return;
+      const chapterIndex = state.currentPosition && Number.isInteger(state.currentPosition.chapter_index)
+        ? state.currentPosition.chapter_index
+        : null;
+      if (chapterIndex == null) {
+        select.value = '';
+        return;
+      }
+      const value = String(chapterIndex);
+      if ([...select.options].some((o) => o.value === value)) {
+        select.value = value;
+      }
+    }
+
+    function normalizeTocItems(items, depth = 0, out = []) {
+      (Array.isArray(items) ? items : []).forEach((item) => {
+        if (!item) return;
+        const href = item.href || item.url || item.cfi || null;
+        const rawLabel = normalizeText(item.label || item.title || '');
+        const label = rawLabel || (href ? href.split('/').pop() : 'Untitled section');
+        out.push({ label, href, depth });
+        const sub = item.subitems || item.items || item.children || [];
+        if (Array.isArray(sub) && sub.length) {
+          normalizeTocItems(sub, depth + 1, out);
+        }
+      });
+      return out;
+    }
+
+    function renderTocList() {
+      const host = els.tocList;
+      if (!host) return;
+      host.innerHTML = '';
+      const items = Array.isArray(state.tocItems) ? state.tocItems : [];
+      els.tocBtn.disabled = !items.length;
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'reader-panel-empty';
+        empty.textContent = 'No table of contents available.';
+        host.appendChild(empty);
+        return;
+      }
+
+      items.forEach((item) => {
+        const btn = document.createElement('button');
+        btn.className = 'toc-item';
+        btn.type = 'button';
+        btn.style.paddingLeft = `${8 + Math.min(8, Math.max(0, item.depth || 0)) * 12}px`;
+        btn.textContent = item.label;
+        btn.disabled = !item.href;
+        btn.addEventListener('click', async () => {
+          if (!item.href || !state.rendition) return;
+          try {
+            closeReaderPanels();
+            await withTimeout(state.rendition.display(item.href), 30000, `display(${item.href})`);
+          } catch (err) {
+            showReaderStatusMessage('Could not open that table-of-contents item.');
+          }
+        });
+        host.appendChild(btn);
+      });
+    }
+
+    async function loadReaderToc() {
+      state.tocItems = [];
+      if (!state.ebook || !state.ebook.loaded) {
+        renderTocList();
+        return;
+      }
+
+      try {
+        const navigation = await withTimeout(state.ebook.loaded.navigation, 30000, 'loaded.navigation');
+        const items = normalizeTocItems(navigation && navigation.toc ? navigation.toc : []);
+        state.tocItems = items.filter((item) => item.href);
+      } catch (err) {
+        state.tocItems = [];
+      }
+
+      if (!state.tocItems.length) {
+        state.tocItems = (state.chapters || []).map((chapter) => ({
+          label: chapterLabel(chapter),
+          href: chapter.spine_href || null,
+          depth: 0,
+        })).filter((item) => item.href);
+      }
+      renderTocList();
+    }
+
+    function formatBookmarkLabel(bookmark) {
+      if (!bookmark) return 'Saved page';
+      if (bookmark.label) return bookmark.label;
+      return chapterProgressLabel(bookmark.chapter_index, bookmark.chapter_percent);
+    }
+
+    function renderBookmarks() {
+      const host = els.bookmarksList;
+      if (!host) return;
+      host.innerHTML = '';
+      const items = Array.isArray(state.bookmarks) ? state.bookmarks : [];
+      if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'reader-panel-empty';
+        empty.textContent = 'No bookmarks yet.';
+        host.appendChild(empty);
+        return;
+      }
+
+      items.forEach((bookmark) => {
+        const row = document.createElement('div');
+        row.className = 'bookmark-item';
+
+        const main = document.createElement('div');
+        main.className = 'bookmark-main';
+        const label = document.createElement('p');
+        label.className = 'bookmark-label';
+        label.textContent = formatBookmarkLabel(bookmark);
+        const sub = document.createElement('p');
+        sub.className = 'bookmark-sub';
+        sub.textContent = relativeTime(bookmark.created_at);
+        main.append(label, sub);
+
+        const actions = document.createElement('div');
+        actions.className = 'bookmark-actions';
+        const openBtn = document.createElement('button');
+        openBtn.type = 'button';
+        openBtn.textContent = 'Open';
+        openBtn.addEventListener('click', async () => {
+          if (!bookmark.cfi || !state.rendition) return;
+          try {
+            closeReaderPanels();
+            await withTimeout(state.rendition.display(bookmark.cfi), 30000, `display(${bookmark.cfi})`);
+          } catch (err) {
+            showReaderStatusMessage('Failed to open bookmark.');
+          }
+        });
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.textContent = 'Delete';
+        removeBtn.addEventListener('click', async () => {
+          if (!state.currentBookId || bookmark.id == null) return;
+          try {
+            await fetchJson(`/api/books/${state.currentBookId}/bookmarks/${bookmark.id}`, { method: 'DELETE' });
+            state.bookmarks = state.bookmarks.filter((b) => Number(b.id) !== Number(bookmark.id));
+            renderBookmarks();
+            updateBookmarkToggleState();
+          } catch (err) {
+            showReaderStatusMessage('Failed to delete bookmark.');
+          }
+        });
+        actions.append(openBtn, removeBtn);
+        row.append(main, actions);
+        host.appendChild(row);
+      });
+    }
+
+    async function loadBookmarks() {
+      if (!state.currentBookId) return;
+      try {
+        const data = await fetchJson(`/api/books/${state.currentBookId}/bookmarks`);
+        state.bookmarks = Array.isArray(data.bookmarks) ? data.bookmarks : [];
+      } catch (err) {
+        state.bookmarks = [];
+      }
+      els.bookmarksBtn.disabled = false;
+      renderBookmarks();
+      updateBookmarkToggleState();
+    }
+
+    function updateBookmarkToggleState() {
+      if (!els.bookmarkToggleBtn) return;
+      const cfi = state.currentPosition && state.currentPosition.cfi ? String(state.currentPosition.cfi) : '';
+      if (!cfi) {
+        els.bookmarkToggleBtn.disabled = true;
+        els.bookmarkToggleBtn.textContent = '☆ Bookmark';
+        return;
+      }
+      els.bookmarkToggleBtn.disabled = false;
+      const isBookmarked = (state.bookmarks || []).some((bookmark) => String(bookmark.cfi || '') === cfi);
+      els.bookmarkToggleBtn.textContent = isBookmarked ? '★ Bookmarked' : '☆ Bookmark';
+    }
+
+    async function toggleCurrentBookmark() {
+      if (!state.currentBookId) return;
+      const pos = state.currentPosition || {};
+      const cfi = pos.cfi ? String(pos.cfi) : '';
+      if (!cfi) {
+        showReaderStatusMessage('No page position yet to bookmark.');
+        return;
+      }
+      const chapterIndex = Number.isFinite(Number(pos.chapter_index)) ? Number(pos.chapter_index) : null;
+      const chapterPercent = Number.isFinite(Number(pos.chapter_percent)) ? Number(pos.chapter_percent) : null;
+      const bookPercent = Number.isFinite(Number(pos.book_percent)) ? Number(pos.book_percent) : null;
+      const payload = {
+        cfi,
+        chapter_index: chapterIndex,
+        chapter_percent: chapterPercent,
+        book_percent: bookPercent,
+        label: chapterProgressLabel(chapterIndex, chapterPercent),
+      };
+      try {
+        const data = await fetchJson(`/api/books/${state.currentBookId}/bookmarks/toggle`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (data.bookmarked) {
+          state.bookmarks = [data.bookmark, ...state.bookmarks.filter((b) => String(b.cfi || '') !== cfi)];
+          showReaderStatusMessage('Bookmark saved.');
+        } else {
+          state.bookmarks = state.bookmarks.filter((b) => String(b.cfi || '') !== cfi);
+          showReaderStatusMessage('Bookmark removed.');
+        }
+        renderBookmarks();
+        updateBookmarkToggleState();
+      } catch (err) {
+        showReaderStatusMessage('Failed to update bookmark.');
+      }
+    }
+
+    async function jumpToChapterByIndex(chapterIndex) {
+      if (!state.readerReady || !state.rendition || state.chapterJumpInFlight) return;
+      const chapter = chapterFromIndex(chapterIndex);
+      if (!chapter) return;
+      const target = chapter.spine_href || null;
+      if (!target) return;
+      try {
+        state.chapterJumpInFlight = true;
+        await withTimeout(state.rendition.display(target), 30000, `display(${target})`);
+      } catch (err) {
+        console.error('Failed to jump to chapter', err);
+      } finally {
+        state.chapterJumpInFlight = false;
+      }
+    }
+
+    function updateReaderProgressText() {
+      if (!state.currentBook) return;
+      const pos = state.currentPosition || {};
+      const chapter = chapterFromIndex(pos.chapter_index);
+      const chapterPct = Math.round(pos.chapter_percent || 0);
+      const bookPct = Math.round(pos.book_percent || 0);
+
+      els.readerTitle.textContent = state.currentBook.title || 'Untitled';
+      els.readerProgress.textContent = chapter
+        ? `Chapter ${chapter.chapter_index + 1} · ${chapterPct}% of chapter · ${bookPct}% of book`
+        : `${bookPct}% of book`;
+
+      const currentEntry = (state.answerHistoryIndex >= 0 && state.answerHistory[state.answerHistoryIndex])
+        ? state.answerHistory[state.answerHistoryIndex]
+        : null;
+      updateQaContext(currentEntry);
+      updateBookmarkToggleState();
+      syncChapterJumpToPosition();
+    }
+
+    function applyReaderFontSize(size) {
+      if (state.rendition) {
+        state.rendition.themes.fontSize(`${size}%`);
+      }
+    }
+
+    function readerWidthBounds() {
+      const min = asNumber(state.settings && state.settings.reader_width_px_min, 760);
+      const max = asNumber(state.settings && state.settings.reader_width_px_max, 1320);
+      return { min, max };
+    }
+
+    function readerBottomPaddingBounds() {
+      const min = asNumber(state.settings && state.settings.reader_bottom_padding_px_min, 12);
+      const max = asNumber(state.settings && state.settings.reader_bottom_padding_px_max, 120);
+      return { min, max };
+    }
+
+    function applyReaderTheme() {
+      if (!state.rendition) return;
+      const bottomPadding = clamp(
+        asNumber(state.settings && state.settings.reader_bottom_padding_px, 34),
+        readerBottomPaddingBounds().min,
+        readerBottomPaddingBounds().max,
+      );
+
+      state.rendition.themes.default({
+        '*': {
+          color: '#e8e0d4 !important',
+          'background-color': 'transparent !important',
+        },
+        html: {
+          margin: '0 !important',
+          padding: '0 !important',
+          height: '100% !important',
+          'box-sizing': 'border-box !important',
+        },
+        body: {
+          background: '#2e2a27 !important',
+          color: '#e8e0d4 !important',
+          'font-family': 'Georgia, serif !important',
+          'line-height': '1.65 !important',
+          margin: '0 !important',
+          padding: `10px 24px ${bottomPadding}px !important`,
+          'box-sizing': 'border-box !important',
+        },
+        p: {
+          color: '#e8e0d4 !important',
+        },
+        h1: { color: '#f0e8da !important' },
+        h2: { color: '#f0e8da !important' },
+        h3: { color: '#f0e8da !important' },
+        a: { color: '#e3be79 !important' },
+        '.epubjs-hl': {
+          fill: '#f5e16c !important',
+          'fill-opacity': '0.66 !important',
+          stroke: 'none !important',
+        },
+        '.bw-cfi-highlight': {
+          fill: '#f5e16c !important',
+          'fill-opacity': '0.66 !important',
+          stroke: 'none !important',
+        },
+      });
+      applyReaderFontSize(asNumber(state.settings && state.settings.reader_font_size, 100));
+    }
+
+    function applyReaderWidth(widthPx) {
+      const bounds = readerWidthBounds();
+      const width = clamp(asNumber(widthPx, 980), bounds.min, bounds.max);
+      if (!state.settings) state.settings = {};
+      state.settings.reader_width_px = width;
+      document.documentElement.style.setProperty('--reader-max-width', `${width}px`);
+      els.readerWidthInput.value = String(width);
+      els.readerWidthValue.textContent = `${width}px`;
+    }
+
+    function applyReaderBottomPadding(bottomPaddingPx) {
+      const bounds = readerBottomPaddingBounds();
+      const bottom = clamp(asNumber(bottomPaddingPx, 34), bounds.min, bounds.max);
+      if (!state.settings) state.settings = {};
+      state.settings.reader_bottom_padding_px = bottom;
+      els.readerBottomPaddingInput.value = String(bottom);
+      els.readerBottomPaddingValue.textContent = `${bottom}px`;
+      applyReaderTheme();
+    }
+
+    function applyReaderSpread(spread) {
+      if (!state.rendition) return;
+      const normalized = spread === 'double' ? 'always' : 'none';
+      try {
+        state.rendition.spread(normalized);
+      } catch (err) {
+        console.warn('Failed to apply reader spread', err);
+      }
+    }
+
+    function setReaderSpread(spread, persist) {
+      const next = spread === 'double' ? 'double' : 'single';
+      if (!state.settings) state.settings = {};
+      state.settings.reader_spread = next;
+      els.readerSpreadSelect.value = next;
+      els.spreadSelect.value = next;
+      applyReaderSpread(next);
+
+      if (!persist) return;
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reader_spread: next }),
+      }).catch((err) => console.error('Failed to save reader layout', err));
+    }
+
+    async function turnPage(direction) {
+      if (!state.readerReady || !state.rendition) return;
+      try {
+        if (direction === 'next') {
+          await state.rendition.next();
+        } else {
+          await state.rendition.prev();
+        }
+      } catch (err) {
+        console.warn(`Page turn failed (${direction})`, err);
+      }
+    }
+
+    function handleReaderArrowShortcut(event) {
+      if (els.readerView.classList.contains('hidden')) return;
+      if (!state.readerReady) return;
+      if (event.defaultPrevented) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      const target = event.target;
+      const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || (target && target.isContentEditable)) {
+        return;
+      }
+
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        turnPage('prev');
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        turnPage('next');
+      }
+    }
+
+    async function flushPositionUpdate() {
+      if (!state.pendingPosition || !state.currentBookId) return;
+      const payload = state.pendingPosition;
+      state.pendingPosition = null;
+      state.lastPositionSentAt = Date.now();
+
+      try {
+        const res = await fetchJson(`/api/books/${state.currentBookId}/position`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        state.currentPosition = {
+          ...state.currentPosition,
+          ...res,
+        };
+      } catch (err) {
+        console.error('Failed to save position', err);
+      }
+    }
+
+    function queuePositionUpdate(payload) {
+      state.pendingPosition = payload;
+      const now = Date.now();
+      if (now - state.lastPositionSentAt > 3000) {
+        flushPositionUpdate();
+      }
+      clearTimeout(state.positionTimer);
+      state.positionTimer = setTimeout(() => flushPositionUpdate(), 3000);
+    }
+
+    async function openReader(bookId) {
+      showReader();
+      state.currentBookId = bookId;
+      setControlsCollapsed(false);
+      closeReaderPanels();
+      resetReaderSearch(true);
+      state.chapterChunkCache = {};
+      state.chapterCfiBuildInFlight = {};
+      state.chapterCfiVerified = {};
+      state.searchMatchCfiCache = {};
+      els.readerStatus.textContent = 'Loading book…';
+      els.readerStatus.classList.add('visible');
+
+      const [bookData, convoData] = await Promise.all([
+        fetchJson(`/api/books/${bookId}`),
+        fetchJson(`/api/books/${bookId}/conversations`),
+      ]);
+
+      state.currentBook = bookData.book;
+      state.chapters = bookData.chapters || [];
+      state.currentPosition = bookData.current_position || null;
+      renderChapterJumpOptions();
+      els.chapterJumpSelect.disabled = true;
+
+      const hydratedHistory = (convoData.conversations || []).map((c) => ({
+        question: c.question,
+        answer: c.answer,
+        sources: c.sources || [],
+        position_context: c.position_context,
+        ask_cfi: c.ask_cfi || null,
+        ask_chapter_index: c.ask_chapter_index != null ? c.ask_chapter_index : null,
+        ask_chapter_percent: c.ask_chapter_percent != null ? c.ask_chapter_percent : null,
+        ask_book_percent: c.ask_book_percent != null ? c.ask_book_percent : null,
+        timestamp: c.created_at,
+      }));
+      state.answerHistory = hydratedHistory.slice(-40);
+      state.answerHistoryIndex = state.answerHistory.length - 1;
+      updateAnswerHistoryControls();
+      renderAnswerHistory();
+      updateReaderProgressText();
+
+      destroyReader();
+      els.readerStatus.textContent = 'Downloading EPUB…';
+      els.readerStatus.classList.add('visible');
+      const epubRes = await fetch(`/api/books/${bookId}/book.epub`);
+      if (!epubRes.ok) {
+        throw new Error(`EPUB download failed (${epubRes.status})`);
+      }
+      const epubBuffer = await epubRes.arrayBuffer();
+      state.ebook = ePub(epubBuffer);
+      state.readerReady = false;
+      state.locationsReady = false;
+      els.turnLeft.classList.add('disabled');
+      els.turnRight.classList.add('disabled');
+      els.prevPageBtn.disabled = true;
+      els.nextPageBtn.disabled = true;
+      els.tocBtn.disabled = true;
+      els.bookmarksBtn.disabled = true;
+      els.bookmarkToggleBtn.disabled = true;
+      els.readerStatus.textContent = 'Preparing reader…';
+
+      state.rendition = state.ebook.renderTo('readerSurface', {
+        width: '100%',
+        height: '100%',
+        flow: 'paginated',
+      });
+      applyReaderTheme();
+      applyReaderSpread((state.settings && state.settings.reader_spread) || 'single');
+      await withTimeout(state.ebook.ready, 30000, 'book.ready');
+      await loadReaderToc();
+      state.ebook.locations.generate(1400).then(() => {
+        state.locationsReady = true;
+      }).catch((err) => {
+        console.warn('Failed to generate locations for precise source jumps', err);
+      });
+
+      state.rendition.on('relocated', (location) => {
+        const start = location && location.start ? location.start : {};
+        const chapterIndex = Number.isInteger(start.index) ? start.index : 0;
+
+        let chapterPercent = 0;
+        if (start.displayed && start.displayed.total) {
+          chapterPercent = (start.displayed.page / start.displayed.total) * 100;
+        }
+
+        const bookPercent = typeof start.percentage === 'number'
+          ? start.percentage * 100
+          : (state.currentPosition && state.currentPosition.book_percent) || 0;
+
+        state.currentPosition = {
+          ...(state.currentPosition || {}),
+          chapter_index: chapterIndex,
+          chapter_percent: chapterPercent,
+          book_percent: bookPercent,
+          cfi: start.cfi || null,
+        };
+
+        updateReaderProgressText();
+        queuePositionUpdate({
+          chapter_index: chapterIndex,
+          chapter_percent: chapterPercent,
+          book_percent: bookPercent,
+          cfi: start.cfi || null,
+        });
+        scheduleReturnDismiss();
+      });
+      state.rendition.on('rendered', (_section, view) => {
+        try {
+          const doc = view && view.document ? view.document : null;
+          if (doc) {
+            doc.addEventListener('keydown', handleReaderArrowShortcut);
+          }
+        } catch (err) {
+          console.warn('Unable to bind iframe key handlers', err);
+        }
+      });
+
+      const startCfi = state.currentPosition && state.currentPosition.cfi;
+      const chapterHrefs = (state.chapters || [])
+        .map((c) => c.spine_href)
+        .filter(Boolean);
+      const meaningfulHref = chapterHrefs.find((href) => !/titlepage|cover|toc|nav/i.test(href)) || null;
+      const firstReadableHref = meaningfulHref || chapterHrefs[0] || null;
+
+      const displayTargets = [];
+      if (startCfi) displayTargets.push(startCfi);
+      if (firstReadableHref) displayTargets.push(firstReadableHref);
+
+      let displayed = false;
+      for (const target of displayTargets) {
+        try {
+          await withTimeout(state.rendition.display(target), 30000, `display(${target})`);
+          displayed = true;
+          break;
+        } catch (err) {
+          console.warn('Display target failed, trying fallback target.', target, err);
+        }
+      }
+      if (!displayed) {
+        await withTimeout(state.rendition.display(), 30000, 'display()');
+      }
+
+      state.readerReady = true;
+      await loadBookmarks();
+      els.readerStatus.classList.remove('visible');
+      els.readerStatus.textContent = '';
+      els.turnLeft.classList.remove('disabled');
+      els.turnRight.classList.remove('disabled');
+      els.prevPageBtn.disabled = false;
+      els.nextPageBtn.disabled = false;
+      els.chapterJumpSelect.disabled = !state.chapters.length;
+      els.bookmarksBtn.disabled = false;
+      syncViewportMetrics();
+      updateReaderProgressText();
+    }
+
+    function openQaPanel() {
+      els.qaBackdrop.classList.add('open');
+      els.qaPanel.classList.add('open');
+      setTimeout(() => els.qaInput.focus(), 40);
+    }
+
+    function closeQaPanel() {
+      els.qaBackdrop.classList.remove('open');
+      els.qaPanel.classList.remove('open');
+    }
+
+    async function jumpToAskLocation(entry = null) {
+      if (!state.readerReady || !state.rendition) return;
+      const activeEntry = entry || state.answerHistory[state.answerHistoryIndex] || null;
+      const askLoc = askLocationForEntry(activeEntry);
+      if (!askLoc) {
+        showReaderStatusMessage('Question location is unavailable.');
+        return;
+      }
+
+      let target = askLoc.cfi || null;
+      if (!target && Number.isFinite(Number(askLoc.position_index))) {
+        target = cfiFromSourcePosition({ position_index: askLoc.position_index });
+      }
+      if (!target && Number.isFinite(Number(askLoc.chapter_index))) {
+        const chapter = chapterFromIndex(askLoc.chapter_index);
+        target = chapter && chapter.spine_href ? chapter.spine_href : null;
+      }
+      if (!target) {
+        showReaderStatusMessage('Question location is unavailable.');
+        return;
+      }
+
+      try {
+        clearCitationHighlights();
+        closeReaderPanels();
+        await withTimeout(state.rendition.display(target), 30000, `display(${target})`);
+        closeQaPanel();
+      } catch (err) {
+        showReaderStatusMessage('Could not return to question location.');
+      }
+    }
+
+    function updateAnswerHistoryControls() {
+      const has = state.answerHistory.length > 0 && state.answerHistoryIndex >= 0;
+      els.qaBackBtn.disabled = !has || state.answerHistoryIndex <= 0;
+      els.qaForwardBtn.disabled = !has || state.answerHistoryIndex >= state.answerHistory.length - 1;
+    }
+
+    function renderAnswerHistory() {
+      els.qaMessages.innerHTML = '';
+
+      if (state.answerHistoryIndex < 0 || !state.answerHistory.length) {
+        const empty = document.createElement('div');
+        empty.className = 'msg-state';
+        empty.textContent = 'Ask a question to start a conversation for this book.';
+        els.qaMessages.appendChild(empty);
+        updateQaContext(null);
+        updateAnswerHistoryControls();
+        return;
+      }
+
+      const entry = state.answerHistory[state.answerHistoryIndex];
+      updateQaContext(entry);
+
+      const user = document.createElement('div');
+      user.className = 'msg msg-user';
+      user.textContent = entry.question;
+
+      const ai = document.createElement('div');
+      ai.className = 'msg msg-ai';
+      const rendered = renderAnswerHtmlWithCitations(entry.answer || '', entry.sources || []);
+      ai.innerHTML = rendered.html;
+      if (isCitationDebugEnabled()) {
+        const debug = document.createElement('details');
+        debug.className = 'citation-debug';
+        const summary = document.createElement('summary');
+        summary.textContent = 'Citation debug';
+        const body = document.createElement('pre');
+        body.textContent = formatCitationDebugText(rendered.debug);
+        debug.append(summary, body);
+        ai.appendChild(debug);
+      }
+
+      els.qaMessages.append(user, ai);
+
+      if (entry.pending) {
+        const pending = document.createElement('div');
+        pending.className = 'msg-state';
+        pending.textContent = 'Thinking…';
+        els.qaMessages.appendChild(pending);
+      }
+      if (entry.error) {
+        const err = document.createElement('div');
+        err.className = 'msg-state';
+        err.style.color = '#ffb3a6';
+        err.textContent = `Error: ${entry.error}`;
+        els.qaMessages.appendChild(err);
+      }
+
+      els.qaMessages.scrollTop = els.qaMessages.scrollHeight;
+      updateAnswerHistoryControls();
+    }
+
+    function pushAnswerHistory(entry) {
+      let next = state.answerHistory;
+      if (state.answerHistoryIndex >= 0 && state.answerHistoryIndex < next.length - 1) {
+        next = next.slice(0, state.answerHistoryIndex + 1);
+      }
+      next = [...next, entry];
+
+      const maxEntries = 40;
+      if (next.length > maxEntries) {
+        next = next.slice(next.length - maxEntries);
+      }
+
+      state.answerHistory = next;
+      state.answerHistoryIndex = state.answerHistory.length - 1;
+      renderAnswerHistory();
     }
 
     async function askQuestion() {
-      const bookId = document.getElementById('bookSelect').value;
-      const question = document.getElementById('question').value;
-      const res = await fetch(`/api/books/${bookId}/query`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question })
-      });
-      const data = await res.json();
-      document.getElementById('answer').textContent = data.answer;
-      const sources = document.getElementById('sources');
-      sources.innerHTML = '';
-      (data.sources || []).forEach(s => {
-        const div = document.createElement('div');
-        div.className = 'source';
-        div.textContent = `Chapter ${s.chapter_index + 1} | Pos ${s.position_index}\n\n${s.text}`;
-        sources.appendChild(div);
-      });
+      const question = els.qaInput.value.trim();
+      if (!question || state.isAsking || !state.currentBookId) return;
+      if (state.currentBook && state.currentBook.embedding_status !== 'ready') {
+        alert('This book is still indexing. Q&A will unlock when indexing is complete.');
+        return;
+      }
+
+      state.isAsking = true;
+      els.qaSendBtn.disabled = true;
+      els.qaInput.value = '';
+
+      const entry = {
+        question,
+        answer: '',
+        sources: [],
+        position_context: state.currentPosition && state.currentPosition.position_index != null
+          ? state.currentPosition.position_index
+          : null,
+        ask_cfi: state.currentPosition && state.currentPosition.cfi ? state.currentPosition.cfi : null,
+        ask_chapter_index: state.currentPosition && state.currentPosition.chapter_index != null
+          ? state.currentPosition.chapter_index
+          : null,
+        ask_chapter_percent: state.currentPosition && state.currentPosition.chapter_percent != null
+          ? state.currentPosition.chapter_percent
+          : null,
+        ask_book_percent: state.currentPosition && state.currentPosition.book_percent != null
+          ? state.currentPosition.book_percent
+          : null,
+        timestamp: new Date().toISOString(),
+        pending: true,
+      };
+      pushAnswerHistory(entry);
+      openQaPanel();
+
+      try {
+        const res = await fetch(`/api/books/${state.currentBookId}/query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question,
+            position_index: entry.position_context,
+            model: els.qaModelSelect.value,
+            ask_cfi: entry.ask_cfi,
+            ask_chapter_index: entry.ask_chapter_index,
+            ask_chapter_percent: entry.ask_chapter_percent,
+            ask_book_percent: entry.ask_book_percent,
+          }),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || 'Query failed');
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const event = JSON.parse(line);
+            if (event.type === 'delta') {
+              entry.answer += event.delta || '';
+              renderAnswerHistory();
+            } else if (event.type === 'done') {
+              entry.answer = event.data && event.data.answer ? event.data.answer : entry.answer;
+              entry.sources = event.data && event.data.sources ? event.data.sources : [];
+              entry.pending = false;
+              renderAnswerHistory();
+            } else if (event.type === 'error') {
+              entry.pending = false;
+              entry.error = event.error || 'Unknown error';
+              renderAnswerHistory();
+            }
+          }
+        }
+
+        if (buffer.trim()) {
+          const event = JSON.parse(buffer);
+          if (event.type === 'done') {
+            entry.answer = event.data && event.data.answer ? event.data.answer : entry.answer;
+            entry.sources = event.data && event.data.sources ? event.data.sources : [];
+          } else if (event.type === 'error') {
+            entry.error = event.error || 'Unknown error';
+          }
+        }
+      } catch (err) {
+        entry.error = err.message;
+      } finally {
+        entry.pending = false;
+        state.isAsking = false;
+        els.qaSendBtn.disabled = false;
+        renderAnswerHistory();
+      }
     }
 
-    loadBooks();
+    async function route() {
+      const id = getBookIdFromPath();
+      if (!id) {
+        showLibrary();
+        await loadBooks();
+        return;
+      }
+
+      try {
+        await openReader(id);
+      } catch (err) {
+        console.error('Reader failed to open', err);
+        els.readerStatus.textContent = `Could not render this EPUB: ${err.message}`;
+        els.readerStatus.classList.add('visible');
+        alert(`Failed to open reader: ${err.message}`);
+        navigate('/');
+      }
+    }
+
+    function setModel(model) {
+      state.settings.model = model;
+      els.modelSelect.value = model;
+      els.qaModelSelect.value = model;
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      }).catch((err) => console.error('Failed to save model', err));
+    }
+
+    function adjustFont(delta) {
+      const current = state.settings && state.settings.reader_font_size ? state.settings.reader_font_size : 100;
+      const next = clamp(current + delta, 70, 160);
+      state.settings.reader_font_size = next;
+      applyReaderFontSize(next);
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reader_font_size: next }),
+      }).catch((err) => console.error('Failed to save font size', err));
+    }
+
+    function bindEvents() {
+      els.importBtn.addEventListener('click', () => els.epubInput.click());
+      els.epubInput.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file) importBook(file);
+        e.target.value = '';
+      });
+
+      els.settingsBtn.addEventListener('click', openSettings);
+      els.readerSettings.addEventListener('click', openSettings);
+      els.cancelSettings.addEventListener('click', async () => {
+        closeSettings();
+        try {
+          await loadSettings();
+        } catch (err) {
+          console.error('Failed to reload settings', err);
+        }
+      });
+      els.saveSettings.addEventListener('click', async () => {
+        try {
+          await saveSettings();
+        } catch (err) {
+          alert(`Failed to save settings: ${err.message}`);
+        }
+      });
+      els.settingsModal.addEventListener('click', async (e) => {
+        if (e.target === els.settingsModal) {
+          closeSettings();
+          try {
+            await loadSettings();
+          } catch (err) {
+            console.error('Failed to reload settings', err);
+          }
+        }
+      });
+
+      els.backToLibrary.addEventListener('click', () => {
+        destroyReader();
+        navigate('/');
+      });
+
+      els.turnLeft.addEventListener('click', () => turnPage('prev'));
+      els.turnRight.addEventListener('click', () => turnPage('next'));
+      els.prevPageBtn.addEventListener('click', () => turnPage('prev'));
+      els.nextPageBtn.addEventListener('click', () => turnPage('next'));
+      els.readerControlsToggle.addEventListener('click', () => setControlsCollapsed(!state.controlsCollapsed));
+      els.tocBtn.addEventListener('click', () => toggleReaderPanel('toc'));
+      els.tocCloseBtn.addEventListener('click', closeReaderPanels);
+      els.bookmarksBtn.addEventListener('click', () => toggleReaderPanel('bookmarks'));
+      els.bookmarksCloseBtn.addEventListener('click', closeReaderPanels);
+      els.bookmarkToggleBtn.addEventListener('click', toggleCurrentBookmark);
+
+      document.addEventListener('keydown', handleReaderArrowShortcut);
+
+      els.qaFab.addEventListener('click', openQaPanel);
+      els.qaCloseBtn.addEventListener('click', closeQaPanel);
+      els.qaBackdrop.addEventListener('click', closeQaPanel);
+      els.qaAskLocationLink.addEventListener('click', () => jumpToAskLocation());
+      els.returnBtn.addEventListener('click', returnToReading);
+      els.returnDismissBtn.addEventListener('click', clearReturnStack);
+
+      els.qaMessages.addEventListener('click', (event) => {
+        const link = event.target.closest('.citation-link');
+        if (!link) return;
+        event.preventDefault();
+
+        const idx = parseInt(link.dataset.sourceIdx || '', 10);
+        if (!Number.isFinite(idx)) return;
+        const entry = state.answerHistory[state.answerHistoryIndex];
+        const source = entry && Array.isArray(entry.sources) ? entry.sources[idx] : null;
+        if (!source) return;
+        const citationContext = {
+          source_index: idx + 1,
+          mode: link.dataset.citationMode || 'unknown',
+          marker: link.dataset.citationMarker || '',
+        };
+        if (isCitationDebugEnabled()) {
+          console.info('Citation clicked', {
+            ...citationContext,
+            source,
+            source_text_preview: sourceTextForMatching(source).slice(0, 260),
+          });
+        }
+        jumpToSource(source, citationContext, { deterministicOnly: true });
+      });
+
+      els.qaSendBtn.addEventListener('click', askQuestion);
+      els.qaInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          askQuestion();
+        }
+      });
+
+      els.qaBackBtn.addEventListener('click', () => {
+        if (state.answerHistoryIndex <= 0) return;
+        state.answerHistoryIndex -= 1;
+        renderAnswerHistory();
+      });
+
+      els.qaForwardBtn.addEventListener('click', () => {
+        if (state.answerHistoryIndex >= state.answerHistory.length - 1) return;
+        state.answerHistoryIndex += 1;
+        renderAnswerHistory();
+      });
+
+      els.qaModelSelect.addEventListener('change', () => setModel(els.qaModelSelect.value));
+      els.readerSearchRun.addEventListener('click', async () => {
+        try {
+          await runReaderSearch();
+        } catch (err) {
+          updateReaderSearchStatus('Search failed');
+          console.error('Reader search failed', err);
+        }
+      });
+      els.readerSearchInput.addEventListener('keydown', async (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        try {
+          await runReaderSearch();
+        } catch (err) {
+          updateReaderSearchStatus('Search failed');
+          console.error('Reader search failed', err);
+        }
+      });
+      els.readerSearchPrev.addEventListener('click', async () => {
+        try {
+          await cycleReaderSearchMatch(-1);
+        } catch (err) {
+          updateReaderSearchStatus('Jump failed');
+          console.error('Search previous failed', err);
+        }
+      });
+      els.readerSearchNext.addEventListener('click', async () => {
+        try {
+          await cycleReaderSearchMatch(1);
+        } catch (err) {
+          updateReaderSearchStatus('Jump failed');
+          console.error('Search next failed', err);
+        }
+      });
+      els.chapterJumpSelect.addEventListener('change', () => {
+        const idx = parseInt(els.chapterJumpSelect.value || '', 10);
+        if (!Number.isFinite(idx)) return;
+        jumpToChapterByIndex(idx);
+      });
+      els.readerSpreadSelect.addEventListener('change', () => setReaderSpread(els.readerSpreadSelect.value, true));
+      els.spreadSelect.addEventListener('change', () => setReaderSpread(els.spreadSelect.value, false));
+      els.readerWidthInput.addEventListener('input', () => applyReaderWidth(els.readerWidthInput.value));
+      els.readerBottomPaddingInput.addEventListener('input', () => applyReaderBottomPadding(els.readerBottomPaddingInput.value));
+
+      els.fontMinus.addEventListener('click', () => adjustFont(-6));
+      els.fontPlus.addEventListener('click', () => adjustFont(6));
+
+      els.readerMain.addEventListener('click', (event) => {
+        if (!els.tocPanel.classList.contains('open') && !els.bookmarksPanel.classList.contains('open')) return;
+        const insidePanel = event.target.closest('#tocPanel, #bookmarksPanel, #tocBtn, #bookmarksBtn');
+        if (!insidePanel) closeReaderPanels();
+      });
+
+      window.addEventListener('resize', syncViewportMetrics);
+      window.addEventListener('orientationchange', () => setTimeout(syncViewportMetrics, 150));
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', syncViewportMetrics);
+      }
+      window.addEventListener('popstate', route);
+    }
+
+    async function init() {
+      window.addEventListener('unhandledrejection', (event) => {
+        console.error('Unhandled promise rejection:', event.reason);
+      });
+      window.addEventListener('error', (event) => {
+        console.error('Unhandled error:', event.error || event.message);
+      });
+      syncViewportMetrics();
+      bindEvents();
+      updateReaderSearchStatus('');
+      try {
+        await loadSettings();
+      } catch (err) {
+        alert(`Failed to load settings: ${err.message}`);
+      }
+      await route();
+    }
+
+    init();
   </script>
 </body>
 </html>
