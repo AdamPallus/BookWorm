@@ -1491,21 +1491,26 @@
       return null;
     }
 
-    function computeCharOffsetFromScroll(container, textNodeIndex) {
+    function computeCharOffsetFromScroll(container, textNodeIndex, startIndex = 0) {
       const containerTop = container.getBoundingClientRect().top;
-      for (const entry of textNodeIndex) {
-        const range = document.createRange();
-        range.selectNodeContents(entry.node);
-        const rects = range.getClientRects();
-        for (const rect of rects) {
-          if (rect.bottom > containerTop && rect.height > 0) {
-            for (let i = 0; i < entry.node.textContent.length; i++) {
-              range.setStart(entry.node, i);
-              range.setEnd(entry.node, Math.min(i + 1, entry.node.textContent.length));
-              const charRect = range.getBoundingClientRect();
-              if (charRect.bottom > containerTop && charRect.height > 0) return entry.startChar + i;
+      const start = Math.max(0, Math.min(textNodeIndex.length - 1, startIndex | 0));
+      const scanFrom = start > 0 ? [start, 0] : [0];
+      for (const from of scanFrom) {
+        for (let idx = from; idx < textNodeIndex.length; idx++) {
+          const entry = textNodeIndex[idx];
+          const range = document.createRange();
+          range.selectNodeContents(entry.node);
+          const rects = range.getClientRects();
+          for (const rect of rects) {
+            if (rect.bottom > containerTop && rect.height > 0) {
+              for (let i = 0; i < entry.node.textContent.length; i++) {
+                range.setStart(entry.node, i);
+                range.setEnd(entry.node, Math.min(i + 1, entry.node.textContent.length));
+                const charRect = range.getBoundingClientRect();
+                if (charRect.bottom > containerTop && charRect.height > 0) return entry.startChar + i;
+              }
+              return entry.startChar;
             }
-            return entry.startChar;
           }
         }
       }
@@ -1592,6 +1597,8 @@
 
     /* ─────────── Paginator Core ─────────── */
     function snapContainerToLineHeight(container) {
+      container.style.height = '';
+      container.style.flex = '1';
       const contentEl = container.querySelector('.bw-chapter-content');
       if (!contentEl) return;
       const cs = window.getComputedStyle(contentEl);
@@ -1630,7 +1637,35 @@
     /* ─── Precomputed Page Boundaries ─── */
     let _pageBreaks = [];  // sorted array of scrollTop values, one per page
     let _pageBreaksKey = null;
+    let _pageClipHeights = [];
+    let _pageStartNodes = [];
     let _currentPageIndex = 0;
+
+    function invalidatePageBreakCache() {
+      _pageBreaks = [];
+      _pageClipHeights = [];
+      _pageStartNodes = [];
+      _pageBreaksKey = null;
+    }
+
+    function collectLineMetrics(contentEl) {
+      const contentRect = contentEl.getBoundingClientRect();
+      const textNodeIndex = buildTextNodeIndex(contentEl);
+      const lineMap = new Map();
+      for (const entry of textNodeIndex) {
+        if (!(entry.node.textContent || '').trim()) continue;
+        const rng = document.createRange();
+        rng.selectNodeContents(entry.node);
+        for (const rect of rng.getClientRects()) {
+          if (rect.height <= 0) continue;
+          const top = quantizePx(rect.top - contentRect.top);
+          const bottom = quantizePx(rect.bottom - contentRect.top);
+          const key = `${top}:${bottom}`;
+          if (!lineMap.has(key)) lineMap.set(key, { top, bottom, node: entry.node });
+        }
+      }
+      return Array.from(lineMap.values()).sort((a, b) => a.top - b.top || a.bottom - b.bottom);
+    }
 
     function buildPageBreaks(container) {
       const contentEl = getContentElement();
@@ -1638,84 +1673,44 @@
       const cacheKey = container.scrollHeight + ':' + container.clientHeight;
       if (_pageBreaksKey === cacheKey) return _pageBreaks;
 
-      const viewport = container.clientHeight;
-      if (viewport <= 0) { _pageBreaks = [0]; _pageBreaksKey = cacheKey; return _pageBreaks; }
-
-      const maxScroll = Math.max(0, container.scrollHeight - viewport);
-      const savedScroll = container.scrollTop;
-
-      // Build page breaks by scanning visible lines at each page position.
-      // For each page, we scroll to its start and find the last line that
-      // fits completely. The next page starts where that line ends + next line begins.
-      const breaks = [0];
-      let pageStart = 0;
-
-      while (pageStart < maxScroll) {
-        container.scrollTop = pageStart;
-        const crect = container.getBoundingClientRect();
-
-        // Walk all text nodes and find the last line that fully fits,
-        // and the first line that doesn't.
-        let lastFitBottom = crect.top;  // bottom of last line that fully fits
-        let firstOverflowTop = -1;     // top of first line that doesn't fit
-        const walker = document.createTreeWalker(contentEl, NodeFilter.SHOW_TEXT);
-        let node;
-        while ((node = walker.nextNode())) {
-          if (!(node.textContent || '').trim()) continue;
-          const rng = document.createRange();
-          rng.selectNodeContents(node);
-          for (const rect of rng.getClientRects()) {
-            if (rect.height <= 0) continue;
-            // Skip lines entirely above viewport
-            if (rect.bottom <= crect.top + 0.5) continue;
-            // Skip lines entirely below viewport (no need to scan further in this node)
-            if (rect.top > crect.bottom + viewport) break;
-
-            // Is this line fully visible?
-            if (rect.bottom <= crect.bottom + 0.5) {
-              // Fully fits
-              if (rect.bottom > lastFitBottom) lastFitBottom = rect.bottom;
-            } else if (rect.top < crect.bottom - 0.5) {
-              // Partially visible (bottom clipped) — this is our overflow line
-              if (firstOverflowTop < 0) {
-                firstOverflowTop = rect.top;
-              } else if (rect.top < firstOverflowTop) {
-                firstOverflowTop = rect.top;
-              }
-            } else {
-              // Entirely below viewport — this starts the next page
-              if (firstOverflowTop < 0) {
-                firstOverflowTop = rect.top;
-              } else if (rect.top < firstOverflowTop) {
-                firstOverflowTop = rect.top;
-              }
-            }
-          }
-        }
-
-        // Determine next page start
-        let nextStart;
-        if (firstOverflowTop >= 0) {
-          // Convert viewport-relative to scroll position
-          nextStart = Math.round(pageStart + (firstOverflowTop - crect.top));
-        } else {
-          // No overflow found — everything fits. We're done.
-          break;
-        }
-
-        if (nextStart > pageStart && nextStart <= maxScroll) {
-          breaks.push(nextStart);
-          pageStart = nextStart;
-        } else if (nextStart > maxScroll) {
-          break;
-        } else {
-          // Safety: advance by at least 1px to avoid infinite loop
-          pageStart += 1;
-        }
+      const viewport = Math.max(0, quantizePx(container.clientHeight));
+      if (viewport <= 0) {
+        _pageBreaks = [0];
+        _pageClipHeights = [0];
+        _pageStartNodes = [null];
+        _pageBreaksKey = cacheKey;
+        return _pageBreaks;
       }
 
-      container.scrollTop = savedScroll;
+      const maxScroll = Math.max(0, quantizePx(container.scrollHeight - viewport));
+      const lines = collectLineMetrics(contentEl);
+      const breaks = [0];
+      const clipHeights = [];
+      const startNodes = [];
+      let pageStart = 0;
+      let lineIndex = 0;
+
+      while (true) {
+        while (lineIndex < lines.length && lines[lineIndex].bottom <= pageStart + 0.5) lineIndex++;
+        startNodes.push(lineIndex < lines.length ? lines[lineIndex].node : null);
+        const pageBottom = pageStart + viewport;
+        let overflowIndex = lineIndex;
+        while (overflowIndex < lines.length && lines[overflowIndex].bottom <= pageBottom + 0.5) overflowIndex++;
+        const lastFullBottom = overflowIndex > lineIndex ? lines[overflowIndex - 1].bottom : pageStart;
+        clipHeights.push(Math.max(0, Math.ceil(pageBottom - lastFullBottom)));
+        if (overflowIndex >= lines.length) break;
+        const nextStart = Math.max(pageStart + 1, Math.round(lines[overflowIndex].top));
+        if (nextStart > maxScroll) {
+          break;
+        }
+        breaks.push(nextStart);
+        pageStart = nextStart;
+        lineIndex = overflowIndex;
+      }
+
       _pageBreaks = breaks;
+      _pageClipHeights = clipHeights;
+      _pageStartNodes = startNodes;
       _pageBreaksKey = cacheKey;
       return breaks;
     }
@@ -1774,35 +1769,14 @@
       // Remove old clip
       container.style.clipPath = '';
       let mask = container.parentElement.querySelector('.bw-page-mask');
-      
       const breaks = buildPageBreaks(container);
       const i = _currentPageIndex;
       if (i >= breaks.length - 1) {
         if (mask) mask.style.display = 'none';
         return;
       }
-      // Find the bottom of the last fully-fitting line by measuring actual rects
       const crect = container.getBoundingClientRect();
-      const contentEl = getContentElement();
-      if (!contentEl) { if (mask) mask.style.display = 'none'; return; }
-      let lastFullBottom = crect.top;
-      const walker = document.createTreeWalker(contentEl, NodeFilter.SHOW_TEXT);
-      let node;
-      while ((node = walker.nextNode())) {
-        if (!(node.textContent || '').trim()) continue;
-        const rng = document.createRange();
-        rng.selectNodeContents(node);
-        for (const rect of rng.getClientRects()) {
-          if (rect.height <= 0) continue;
-          if (rect.bottom <= crect.top + 0.5) continue;
-          if (rect.top >= crect.bottom) break;
-          if (rect.bottom <= crect.bottom + 0.5) {
-            if (rect.bottom > lastFullBottom) lastFullBottom = rect.bottom;
-          }
-        }
-      }
-      // Place an opaque overlay covering everything below the last full line
-      const coverHeight = Math.ceil(crect.bottom - lastFullBottom);
+      const coverHeight = _pageClipHeights[i] || 0;
       if (coverHeight > 0.5) {
         if (!mask) {
           mask = document.createElement('div');
@@ -1837,7 +1811,6 @@
       if (_currentPageIndex >= breaks.length - 1) return false;
       _currentPageIndex += 1;
       c.scrollTop = breaks[_currentPageIndex];
-      applyPageClip(c);
       readerDiag('page:next', { pageIndex: _currentPageIndex, scrollTop: c.scrollTop, totalPages: breaks.length });
       return true;
     }
@@ -1848,7 +1821,6 @@
       if (_currentPageIndex <= 0) { c.scrollTop = 0; return false; }
       _currentPageIndex -= 1;
       c.scrollTop = breaks[_currentPageIndex];
-      applyPageClip(c);
       readerDiag('page:prev', { pageIndex: _currentPageIndex, scrollTop: c.scrollTop, totalPages: breaks.length });
       return true;
     }
@@ -1871,7 +1843,13 @@
       const breaks = buildPageBreaks(container);
       _currentPageIndex = findPageIndex(breaks, container.scrollTop);
       const textNodeIndex = buildTextNodeIndex(contentEl);
-      const charOffset = computeCharOffsetFromScroll(container, textNodeIndex);
+      let hintIndex = 0;
+      const startNode = _pageStartNodes[_currentPageIndex];
+      if (startNode) {
+        const foundIndex = textNodeIndex.findIndex(entry => entry.node === startNode);
+        if (foundIndex >= 0) hintIndex = Math.max(0, foundIndex - 1);
+      }
+      const charOffset = computeCharOffsetFromScroll(container, textNodeIndex, hintIndex);
       state.currentCharOffset = charOffset;
       state.currentPage = _currentPageIndex;
       state.totalPages = breaks.length;
@@ -1938,13 +1916,14 @@
       if (imgs.length) await Promise.all(Array.from(imgs).map(img => img.complete ? Promise.resolve() : new Promise(r => { img.onload = r; img.onerror = r; })));
       const tni = buildTextNodeIndex(content);
       applyReaderSpread((state.settings && state.settings.reader_spread) || 'single');
+      snapContainerToLineHeight(container);
       if (charOffset === Infinity) { container.scrollTop = clampScrollTop(container, container.scrollHeight); }
       else if (charOffset > 0) { scrollToCharOffset(container, content, tni, charOffset, 10); }
       else { container.scrollTop = 0; }
       state.currentCharOffset = charOffset === Infinity ? (tni.length ? tni[tni.length-1].endChar : 0) : charOffset;
       container.scrollTop = clampScrollTop(container, container.scrollTop);
       // Invalidate and rebuild page breaks for the new chapter
-      _pageBreaksKey = null;
+      invalidatePageBreakCache();
       const breaks = buildPageBreaks(container);
       _currentPageIndex = findPageIndex(breaks, container.scrollTop);
       // Snap to exact page boundary
@@ -2013,8 +1992,9 @@
       const container = getReaderContainer(), contentEl = getContentElement();
       if (!container || !contentEl) return;
       // Invalidate page breaks — layout changed
-      _pageBreaksKey = null;
+      invalidatePageBreakCache();
       const before = containerMetrics(container);
+      snapContainerToLineHeight(container);
       scrollToCharOffset(container, contentEl, buildTextNodeIndex(contentEl), state.currentCharOffset);
       container.scrollTop = clampScrollTop(container, container.scrollTop);
       // Rebuild page breaks and snap to nearest page boundary
@@ -2828,6 +2808,7 @@
       clearTimeout(state.controlsLayoutTimer); state.controlsLayoutTimer = null;
       clearTimeout(state.controlsMetricsTimer); state.controlsMetricsTimer = null;
       clearTimeout(reflowTimer); reflowTimer = null;
+      invalidatePageBreakCache();
       if (state.ebook) try { state.ebook.destroy(); } catch(e){}
       state.ebook = null; state.readerReady = false;
       state.chapterHtmlCache = {}; state.currentChapterIndex = 0; state.totalChapters = 0;
@@ -2883,8 +2864,6 @@
       await loadReaderToc();
 
       els.readerSurface.style.overflow = 'hidden'; els.readerSurface.style.position = 'relative';
-      // Snap container height to a multiple of line-height to prevent partial-line clipping
-      snapContainerToLineHeight(els.readerSurface);
 
       let startChapter = 0, startCharOffset = 0;
       if (state.currentPosition) {
