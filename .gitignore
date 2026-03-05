@@ -1,6 +1,9 @@
 .venv/
 __pycache__/
 *.pyc
+.env
+data/
 bookworm.db
 *.log
 .DS_Store
+node_modules/
