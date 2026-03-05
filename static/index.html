@@ -23,7 +23,9 @@
       --shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
       --reader-max-width: 980px;
       --app-vh: 1vh;
-      --reader-topbar-height: 48px;
+      --reader-controls-height: 0px;
+      --reader-topbar-height: 0px;
+      --reader-toggle-clearance: 30px;
     }
 
     * { box-sizing: border-box; }
@@ -256,11 +258,18 @@
       z-index: 10;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
     }
 
     .reader-controls {
-      overflow: hidden;
-      max-height: 220px;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 44;
+      overflow-x: hidden;
+      overflow-y: auto;
+      max-height: min(72vh, 420px);
       opacity: 1;
       transition: max-height 180ms ease, opacity 180ms ease;
     }
@@ -269,6 +278,7 @@
       max-height: 0;
       opacity: 0;
       pointer-events: none;
+      overflow: hidden;
     }
 
     .reader-topbar {
@@ -343,8 +353,10 @@
     }
 
     .reader-controls-toggle {
-      align-self: center;
-      margin: 6px auto 6px;
+      position: absolute;
+      top: calc(var(--reader-controls-height) + 8px);
+      left: 50%;
+      transform: translateX(-50%);
       width: 36px;
       height: 20px;
       border-radius: 999px;
@@ -354,11 +366,16 @@
       padding: 0;
       line-height: 1;
       font-size: 14px;
-      z-index: 32;
+      z-index: 45;
+      transition: top 180ms ease, background 160ms ease, border-color 160ms ease;
+    }
+
+    .reader-controls-toggle:hover:not(:disabled) {
+      transform: translateX(-50%);
     }
 
     .reader-shell.controls-collapsed .reader-controls-toggle {
-      margin-top: 8px;
+      top: 8px;
     }
 
     .reader-main {
@@ -368,6 +385,7 @@
       align-items: stretch;
       position: relative;
       overflow: hidden;
+      padding-top: var(--reader-toggle-clearance);
     }
 
     .reader-frame {
@@ -381,7 +399,7 @@
 
     #readerSurface {
       width: 100%;
-      height: calc((var(--app-vh) * 100) - var(--reader-topbar-height));
+      height: 100%;
     }
 
     .reader-searchbar {
@@ -418,10 +436,10 @@
 
     .reader-sidepanels {
       position: absolute;
-      top: 12px;
+      top: calc(var(--reader-controls-height) + 12px);
       left: 12px;
       right: auto;
-      z-index: 38;
+      z-index: 52;
       pointer-events: none;
       display: flex;
       flex-direction: column;
@@ -931,13 +949,13 @@
       .reader-topbar .reader-actions { grid-area: right; justify-self: end; }
       .reader-sidepanels {
         left: 8px;
-        top: 8px;
+        top: calc(var(--reader-controls-height) + 8px);
         max-width: calc(100vw - 16px);
       }
       .reader-panel {
         width: calc(100vw - 16px);
       }
-      #readerSurface { height: calc((var(--app-vh) * 100) - var(--reader-topbar-height)); }
+      #readerSurface { height: 100%; }
       #chapterJumpSelect { width: min(52vw, 260px); min-width: 130px; }
       .reader-search-status { min-width: 0; font-size: 11px; }
     }
@@ -1164,6 +1182,15 @@
       tocItems: [],
       controlsCollapsed: false,
       controlsLayoutTimer: null,
+      controlsMetricsTimer: null,
+      pageStartAnchorCfi: null,
+      pageStartAnchorText: null,
+      pageStartAnchorPhrases: [],
+      layoutRefreshInFlight: false,
+      layoutRefreshAnchorCfi: null,
+      layoutRefreshAnchorText: null,
+      layoutRefreshAnchorPhrases: [],
+      layoutRefreshToken: 0,
       chapterChunkCache: {},
       chapterCfiBuildInFlight: {},
       chapterCfiVerified: {},
@@ -1264,10 +1291,21 @@
       const controlsHeight = els.readerControls
         ? Math.max(0, Math.round(els.readerControls.getBoundingClientRect().height || 0))
         : 0;
+      document.documentElement.style.setProperty('--reader-controls-height', `${controlsHeight}px`);
       const toggleHeight = els.readerControlsToggle
         ? Math.max(0, Math.round(els.readerControlsToggle.getBoundingClientRect().height || 0) + 6)
         : 0;
       document.documentElement.style.setProperty('--reader-topbar-height', `${controlsHeight + toggleHeight}px`);
+    }
+
+    function scheduleControlsMetricsSync(delayMs = 220) {
+      syncViewportMetrics();
+      requestAnimationFrame(() => syncViewportMetrics());
+      clearTimeout(state.controlsMetricsTimer);
+      state.controlsMetricsTimer = setTimeout(() => {
+        state.controlsMetricsTimer = null;
+        syncViewportMetrics();
+      }, Math.max(0, Math.floor(asNumber(delayMs, 220))));
     }
 
     function withTimeout(promise, ms, label) {
@@ -1574,14 +1612,90 @@
       return state.currentPosition && state.currentPosition.cfi ? String(state.currentPosition.cfi) : '';
     }
 
-    function queueReaderLayoutRefresh(anchorCfi = '') {
+    function preferredPageStartCfi() {
+      if (state.layoutRefreshAnchorCfi) return String(state.layoutRefreshAnchorCfi);
+      if (state.pageStartAnchorCfi) return String(state.pageStartAnchorCfi);
+      return currentReaderCfi();
+    }
+
+    function buildReflowAnchorPhrases(text, maxPhrases = 6) {
+      const normalized = normalizeText(text || '');
+      if (!normalized) return [];
+      const words = normalized.split(' ').filter((w) => w.length >= 2);
+      if (words.length < 6) return [normalized.toLowerCase()];
+
+      const windowSize = Math.max(8, Math.min(16, Math.floor(words.length / 5)));
+      const starts = [
+        0,
+        Math.max(0, Math.floor(words.length * 0.2) - Math.floor(windowSize / 2)),
+        Math.max(0, Math.floor(words.length * 0.45) - Math.floor(windowSize / 2)),
+        Math.max(0, Math.floor(words.length * 0.7) - Math.floor(windowSize / 2)),
+        Math.max(0, words.length - windowSize),
+      ];
+      const uniqueStarts = [...new Set(starts)].filter((s) => s >= 0 && s < words.length);
+      const phrases = [];
+      uniqueStarts.forEach((start) => {
+        const phrase = words.slice(start, Math.min(words.length, start + windowSize)).join(' ').trim();
+        if (phrase.length >= 24 && !phrases.includes(phrase.toLowerCase())) {
+          phrases.push(phrase.toLowerCase());
+        }
+      });
+      return phrases.slice(0, Math.max(1, asNumber(maxPhrases, 6)));
+    }
+
+    function captureLivePageAnchorSnapshot() {
+      const cfi = currentReaderCfi() || preferredPageStartCfi() || '';
+      const text = captureVisibleTextSample(2200) || '';
+      const phrases = buildReflowAnchorPhrases(text, 6);
+
+      if (cfi) state.pageStartAnchorCfi = String(cfi);
+      if (text) state.pageStartAnchorText = String(text);
+      state.pageStartAnchorPhrases = phrases;
+      return { cfi: cfi ? String(cfi) : '', text: String(text || ''), phrases };
+    }
+
+    function visibleContainsAnchorPhrase(phrases) {
+      const visible = normalizeText(captureVisibleTextSample(2600)).toLowerCase();
+      if (!visible) return false;
+      const candidates = Array.isArray(phrases) ? phrases : [];
+      return candidates.some((phrase) => {
+        const probe = normalizeText(phrase || '').toLowerCase();
+        return probe.length >= 12 && visible.includes(probe);
+      });
+    }
+
+    function findCfiForAnchorPhrases(phrases) {
+      const candidates = Array.isArray(phrases) ? phrases : [];
+      for (const phrase of candidates) {
+        const probe = normalizeText(phrase || '');
+        if (probe.length < 12) continue;
+        const cfi = findCfiForSourceText(probe, { literal: true });
+        if (cfi) return cfi;
+      }
+      return null;
+    }
+
+    function queueReaderLayoutRefresh(anchor = null) {
+      const snapshot = (anchor && typeof anchor === 'object')
+        ? anchor
+        : captureLivePageAnchorSnapshot();
       clearTimeout(state.controlsLayoutTimer);
       state.controlsLayoutTimer = setTimeout(async () => {
         state.controlsLayoutTimer = null;
         syncViewportMetrics();
         if (!state.readerReady || !state.rendition) return;
 
-        const targetCfi = anchorCfi || currentReaderCfi();
+        const targetCfi = snapshot.cfi || preferredPageStartCfi();
+        const targetText = normalizeText(snapshot.text || state.pageStartAnchorText || '');
+        const targetPhrases = (Array.isArray(snapshot.phrases) && snapshot.phrases.length)
+          ? snapshot.phrases.slice(0, 6)
+          : buildReflowAnchorPhrases(targetText, 6);
+        const refreshToken = (state.layoutRefreshToken || 0) + 1;
+        state.layoutRefreshToken = refreshToken;
+        state.layoutRefreshInFlight = !!targetCfi;
+        state.layoutRefreshAnchorCfi = targetCfi || null;
+        state.layoutRefreshAnchorText = targetText || null;
+        state.layoutRefreshAnchorPhrases = targetPhrases;
         try {
           const rect = els.readerSurface.getBoundingClientRect();
           const width = Math.max(1, Math.round(rect.width || 0));
@@ -1592,22 +1706,36 @@
           if (targetCfi) {
             await withTimeout(state.rendition.display(targetCfi), 15000, `display(${targetCfi})`);
           }
+          if (targetPhrases.length && !visibleContainsAnchorPhrase(targetPhrases)) {
+            let fallbackCfi = findCfiForAnchorPhrases(targetPhrases);
+            if (!fallbackCfi && targetText) {
+              fallbackCfi = findCfiForSourceText(targetText, { literal: true });
+            }
+            if (fallbackCfi && fallbackCfi !== targetCfi) {
+              await withTimeout(state.rendition.display(fallbackCfi), 15000, `display(${fallbackCfi})`);
+            }
+          }
         } catch (err) {
           console.warn('Failed to refresh reader layout after controls change', err);
+        } finally {
+          if (state.layoutRefreshToken === refreshToken) {
+            state.layoutRefreshInFlight = false;
+            state.layoutRefreshAnchorCfi = null;
+            state.layoutRefreshAnchorText = null;
+            state.layoutRefreshAnchorPhrases = [];
+          }
         }
       }, 220);
     }
 
     function setControlsCollapsed(collapsed) {
-      const anchorCfi = currentReaderCfi();
       const next = !!collapsed;
       state.controlsCollapsed = next;
       els.readerView.classList.toggle('controls-collapsed', next);
       if (next) closeReaderPanels();
       els.readerControlsToggle.textContent = next ? '▾' : '▴';
       els.readerControlsToggle.title = next ? 'Expand controls' : 'Collapse controls';
-      syncViewportMetrics();
-      queueReaderLayoutRefresh(anchorCfi);
+      scheduleControlsMetricsSync(220);
     }
 
     function closeReaderPanels() {
@@ -2036,6 +2164,164 @@
         return spineHrefMatches(href, spineHref);
       });
       return hit || contents[0];
+    }
+
+    function charIndexForDomPoint(index, container, offset) {
+      if (!index || !Array.isArray(index.charMap)) return null;
+      let node = container || null;
+      let pointOffset = Math.max(0, Math.floor(asNumber(offset, 0)));
+
+      if (node && node.nodeType !== 3) {
+        const doc = node.ownerDocument || null;
+        if (!doc) return null;
+        const NodeFilterRef = (doc.defaultView && doc.defaultView.NodeFilter) || NodeFilter;
+        const walker = doc.createTreeWalker(node, NodeFilterRef.SHOW_TEXT);
+        const firstText = walker.nextNode();
+        if (!firstText) return null;
+        node = firstText;
+        pointOffset = 0;
+      }
+      if (!node || node.nodeType !== 3) return null;
+
+      let fallback = null;
+      for (let i = 0; i < index.charMap.length; i += 1) {
+        const ref = index.charMap[i];
+        if (!ref || ref.node !== node) continue;
+        if (ref.offset >= pointOffset) return i;
+        fallback = i;
+      }
+      return fallback;
+    }
+
+    function canonicalOffsetFromIndex(index, charIndex) {
+      if (!index || typeof index.textLower !== 'string') return null;
+      if (charIndex == null || !Number.isFinite(Number(charIndex))) return null;
+      const limit = Math.max(0, Math.min(index.textLower.length, Math.floor(Number(charIndex))));
+      let canonicalOffset = 0;
+      for (let i = 0; i < limit; i += 1) {
+        if (/[a-z0-9]/.test(index.textLower[i])) canonicalOffset += 1;
+      }
+      return canonicalOffset;
+    }
+
+    function canonicalLengthFromIndex(index) {
+      if (!index || typeof index.textLower !== 'string') return 0;
+      let total = 0;
+      for (let i = 0; i < index.textLower.length; i += 1) {
+        if (/[a-z0-9]/.test(index.textLower[i])) total += 1;
+      }
+      return total;
+    }
+
+    async function buildBookmarkAnchorPayload(pos = {}) {
+      const chapterIndex = Number.isFinite(Number(pos.chapter_index)) ? Number(pos.chapter_index) : null;
+      const chapter = chapterFromIndex(chapterIndex);
+      const currentLoc = (state.rendition && typeof state.rendition.currentLocation === 'function')
+        ? state.rendition.currentLocation()
+        : null;
+      const locHref = normalizeSpineHref(currentLoc && currentLoc.start && currentLoc.start.href ? currentLoc.start.href : '');
+      const chapterHref = locHref || normalizeSpineHref(chapter && chapter.spine_href ? chapter.spine_href : '');
+      const anchor = {
+        chapter_href: chapterHref || null,
+        anchor_canonical_offset: null,
+        anchor_text: null,
+      };
+
+      const cfi = pos && pos.cfi ? String(pos.cfi) : '';
+      if (state.rendition && cfi) {
+        try {
+          let range = null;
+          if (typeof state.rendition.getRange === 'function') {
+            range = await withTimeout(Promise.resolve(state.rendition.getRange(cfi)), 10000, `getRange(${cfi})`);
+          }
+          const content = renderedContentForSpine(anchor.chapter_href);
+          const doc = content && content.document ? content.document : null;
+          if (doc && doc.body && range && range.startContainer) {
+            const index = buildTextNodeIndex(doc.body);
+            const charIndex = charIndexForDomPoint(index, range.startContainer, range.startOffset);
+            const canonicalOffset = canonicalOffsetFromIndex(index, charIndex);
+            if (canonicalOffset != null) {
+              anchor.anchor_canonical_offset = canonicalOffset;
+            }
+          }
+          if (range && typeof range.toString === 'function') {
+            const rangeText = normalizeText(range.toString());
+            if (rangeText) anchor.anchor_text = rangeText.slice(0, 240);
+          }
+        } catch (err) {
+          // Fallbacks below handle unresolved range anchors.
+        }
+      }
+      if (!anchor.anchor_text) {
+        const sample = captureVisibleTextSample(240);
+        if (sample) anchor.anchor_text = sample.slice(0, 240);
+      }
+      return anchor;
+    }
+
+    async function openBookmark(bookmark) {
+      if (!bookmark || !state.rendition) return false;
+      const chapter = chapterFromIndex(asNumber(bookmark.chapter_index, null));
+      const chapterHref = normalizeSpineHref(bookmark.chapter_href || (chapter && chapter.spine_href) || '');
+      const targets = [];
+      const addTarget = (target) => {
+        if (!target) return;
+        if (!targets.includes(target)) targets.push(target);
+      };
+      addTarget(bookmark.cfi || '');
+      addTarget(chapterHref);
+
+      let displayed = false;
+      for (const target of targets) {
+        try {
+          await withTimeout(state.rendition.display(target), 30000, `display(${target})`);
+          displayed = true;
+          if (target === bookmark.cfi) return true;
+          break;
+        } catch (err) {
+          // Try fallback target.
+        }
+      }
+      if (!displayed) return false;
+
+      const content = renderedContentForSpine(chapterHref);
+      const doc = content && content.document ? content.document : null;
+      const index = doc && doc.body ? buildTextNodeIndex(doc.body) : null;
+
+      let anchorOffset = asNumber(bookmark.anchor_canonical_offset, null);
+      if (anchorOffset == null && Number.isFinite(Number(bookmark.chapter_percent)) && index) {
+        const canonicalLen = canonicalLengthFromIndex(index);
+        if (canonicalLen > 0) {
+          const pct = clamp(Number(bookmark.chapter_percent), 0, 100);
+          anchorOffset = Math.max(0, Math.min(canonicalLen - 1, Math.round((pct / 100) * canonicalLen)));
+        }
+      }
+
+      if (anchorOffset != null && content) {
+        const canonicalCfi = cfiFromCanonicalRange(content, anchorOffset, anchorOffset + 56);
+        if (canonicalCfi) {
+          try {
+            await withTimeout(state.rendition.display(canonicalCfi), 30000, `display(${canonicalCfi})`);
+            return true;
+          } catch (err) {
+            // Continue to snippet fallback.
+          }
+        }
+      }
+
+      const anchorText = normalizeText(bookmark.anchor_text || '');
+      if (anchorText) {
+        const literalCfi = findCfiForSourceText(anchorText, { literal: true });
+        if (literalCfi) {
+          try {
+            await withTimeout(state.rendition.display(literalCfi), 30000, `display(${literalCfi})`);
+            return true;
+          } catch (err) {
+            return false;
+          }
+        }
+      }
+      return true;
     }
 
     function matchSpanFromIndex(index, phrase, fromChar = 0, minWords = 1) {
@@ -2788,6 +3074,16 @@
     function destroyReader() {
       clearTimeout(state.controlsLayoutTimer);
       state.controlsLayoutTimer = null;
+      clearTimeout(state.controlsMetricsTimer);
+      state.controlsMetricsTimer = null;
+      state.pageStartAnchorCfi = null;
+      state.pageStartAnchorText = null;
+      state.pageStartAnchorPhrases = [];
+      state.layoutRefreshInFlight = false;
+      state.layoutRefreshAnchorCfi = null;
+      state.layoutRefreshAnchorText = null;
+      state.layoutRefreshAnchorPhrases = [];
+      state.layoutRefreshToken = 0;
       if (state.rendition) {
         try { state.rendition.destroy(); } catch (e) {}
       }
@@ -2990,10 +3286,13 @@
         openBtn.type = 'button';
         openBtn.textContent = 'Open';
         openBtn.addEventListener('click', async () => {
-          if (!bookmark.cfi || !state.rendition) return;
+          if (!state.rendition) return;
           try {
             closeReaderPanels();
-            await withTimeout(state.rendition.display(bookmark.cfi), 30000, `display(${bookmark.cfi})`);
+            const opened = await openBookmark(bookmark);
+            if (!opened) {
+              showReaderStatusMessage('Failed to open bookmark.');
+            }
           } catch (err) {
             showReaderStatusMessage('Failed to open bookmark.');
           }
@@ -3055,11 +3354,24 @@
       const chapterIndex = Number.isFinite(Number(pos.chapter_index)) ? Number(pos.chapter_index) : null;
       const chapterPercent = Number.isFinite(Number(pos.chapter_percent)) ? Number(pos.chapter_percent) : null;
       const bookPercent = Number.isFinite(Number(pos.book_percent)) ? Number(pos.book_percent) : null;
+      let anchorPayload = {
+        chapter_href: null,
+        anchor_canonical_offset: null,
+        anchor_text: null,
+      };
+      try {
+        anchorPayload = await buildBookmarkAnchorPayload(pos);
+      } catch (err) {
+        // Keep bookmark creation resilient even if anchor extraction fails.
+      }
       const payload = {
         cfi,
         chapter_index: chapterIndex,
         chapter_percent: chapterPercent,
         book_percent: bookPercent,
+        chapter_href: anchorPayload.chapter_href,
+        anchor_canonical_offset: anchorPayload.anchor_canonical_offset,
+        anchor_text: anchorPayload.anchor_text,
         label: chapterProgressLabel(chapterIndex, chapterPercent),
       };
       try {
@@ -3193,6 +3505,7 @@
       document.documentElement.style.setProperty('--reader-max-width', `${width}px`);
       els.readerWidthInput.value = String(width);
       els.readerWidthValue.textContent = `${width}px`;
+      queueReaderLayoutRefresh(captureLivePageAnchorSnapshot());
     }
 
     function applyReaderBottomPadding(bottomPaddingPx) {
@@ -3203,6 +3516,7 @@
       els.readerBottomPaddingInput.value = String(bottom);
       els.readerBottomPaddingValue.textContent = `${bottom}px`;
       applyReaderTheme();
+      queueReaderLayoutRefresh(captureLivePageAnchorSnapshot());
     }
 
     function applyReaderSpread(spread) {
@@ -3222,6 +3536,7 @@
       els.readerSpreadSelect.value = next;
       els.spreadSelect.value = next;
       applyReaderSpread(next);
+      queueReaderLayoutRefresh(captureLivePageAnchorSnapshot());
 
       if (!persist) return;
       fetch('/api/settings', {
@@ -3338,6 +3653,11 @@
       updateReaderProgressText();
 
       destroyReader();
+      state.pageStartAnchorCfi = state.currentPosition && state.currentPosition.cfi
+        ? String(state.currentPosition.cfi)
+        : null;
+      state.pageStartAnchorText = null;
+      state.pageStartAnchorPhrases = [];
       els.readerStatus.textContent = 'Downloading EPUB…';
       els.readerStatus.classList.add('visible');
       const epubRes = await fetch(`/api/books/${bookId}/book.epub`);
@@ -3384,13 +3704,45 @@
         const bookPercent = typeof start.percentage === 'number'
           ? start.percentage * 100
           : (state.currentPosition && state.currentPosition.book_percent) || 0;
+        const startCfi = start && start.cfi ? String(start.cfi) : null;
+        const refreshAnchorCfi = state.layoutRefreshInFlight && state.layoutRefreshAnchorCfi
+          ? String(state.layoutRefreshAnchorCfi)
+          : null;
+        const isRefreshRelocation = !!(refreshAnchorCfi && startCfi && startCfi === refreshAnchorCfi);
+        if (state.layoutRefreshInFlight && !isRefreshRelocation) {
+          state.layoutRefreshInFlight = false;
+          state.layoutRefreshAnchorCfi = null;
+          state.layoutRefreshAnchorText = null;
+          state.layoutRefreshAnchorPhrases = [];
+        }
+        const fallbackCfi = state.currentPosition && state.currentPosition.cfi
+          ? String(state.currentPosition.cfi)
+          : null;
+        const resolvedCfi = isRefreshRelocation
+          ? refreshAnchorCfi
+          : (startCfi || fallbackCfi);
+        if (resolvedCfi) state.pageStartAnchorCfi = String(resolvedCfi);
+        if (isRefreshRelocation && state.layoutRefreshAnchorText) {
+          state.pageStartAnchorText = String(state.layoutRefreshAnchorText);
+          state.pageStartAnchorPhrases = Array.isArray(state.layoutRefreshAnchorPhrases)
+            ? state.layoutRefreshAnchorPhrases.slice(0, 6)
+            : [];
+        } else {
+          const sample = captureVisibleTextSample(2200);
+          if (sample) {
+            state.pageStartAnchorText = String(sample);
+            state.pageStartAnchorPhrases = buildReflowAnchorPhrases(sample, 6);
+          } else {
+            state.pageStartAnchorPhrases = [];
+          }
+        }
 
         state.currentPosition = {
           ...(state.currentPosition || {}),
           chapter_index: chapterIndex,
           chapter_percent: chapterPercent,
           book_percent: bookPercent,
-          cfi: start.cfi || null,
+          cfi: resolvedCfi,
         };
 
         updateReaderProgressText();
@@ -3398,7 +3750,7 @@
           chapter_index: chapterIndex,
           chapter_percent: chapterPercent,
           book_percent: bookPercent,
-          cfi: start.cfi || null,
+          cfi: resolvedCfi,
         });
         scheduleReturnDismiss();
       });
@@ -3437,6 +3789,7 @@
       if (!displayed) {
         await withTimeout(state.rendition.display(), 30000, 'display()');
       }
+      captureLivePageAnchorSnapshot();
 
       state.readerReady = true;
       await loadBookmarks();
@@ -3712,6 +4065,7 @@
       const next = clamp(current + delta, 70, 160);
       state.settings.reader_font_size = next;
       applyReaderFontSize(next);
+      queueReaderLayoutRefresh(captureLivePageAnchorSnapshot());
       fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3765,6 +4119,11 @@
       els.prevPageBtn.addEventListener('click', () => turnPage('prev'));
       els.nextPageBtn.addEventListener('click', () => turnPage('next'));
       els.readerControlsToggle.addEventListener('click', () => setControlsCollapsed(!state.controlsCollapsed));
+      els.readerControls.addEventListener('transitionend', (event) => {
+        if (event.target !== els.readerControls) return;
+        if (event.propertyName !== 'max-height' && event.propertyName !== 'opacity') return;
+        syncViewportMetrics();
+      });
       els.tocBtn.addEventListener('click', () => toggleReaderPanel('toc'));
       els.tocCloseBtn.addEventListener('click', closeReaderPanels);
       els.bookmarksBtn.addEventListener('click', () => toggleReaderPanel('bookmarks'));
@@ -3879,10 +4238,10 @@
         if (!insidePanel) closeReaderPanels();
       });
 
-      window.addEventListener('resize', syncViewportMetrics);
-      window.addEventListener('orientationchange', () => setTimeout(syncViewportMetrics, 150));
+      window.addEventListener('resize', () => queueReaderLayoutRefresh(captureLivePageAnchorSnapshot()));
+      window.addEventListener('orientationchange', () => setTimeout(() => queueReaderLayoutRefresh(captureLivePageAnchorSnapshot()), 150));
       if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', syncViewportMetrics);
+        window.visualViewport.addEventListener('resize', () => queueReaderLayoutRefresh(captureLivePageAnchorSnapshot()));
       }
       window.addEventListener('popstate', route);
     }

@@ -78,6 +78,9 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   chapter_index INTEGER,
   chapter_percent REAL,
   book_percent REAL,
+  chapter_href TEXT,
+  anchor_canonical_offset INTEGER,
+  anchor_text TEXT,
   label TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(book_id, cfi)
@@ -210,6 +213,9 @@ def _migrate(conn: sqlite3.Connection):
       chapter_index INTEGER,
       chapter_percent REAL,
       book_percent REAL,
+      chapter_href TEXT,
+      anchor_canonical_offset INTEGER,
+      anchor_text TEXT,
       label TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(book_id, cfi)
@@ -219,8 +225,81 @@ def _migrate(conn: sqlite3.Connection):
   _ensure_column(conn, "bookmarks", "chapter_index", "INTEGER")
   _ensure_column(conn, "bookmarks", "chapter_percent", "REAL")
   _ensure_column(conn, "bookmarks", "book_percent", "REAL")
+  _ensure_column(conn, "bookmarks", "chapter_href", "TEXT")
+  _ensure_column(conn, "bookmarks", "anchor_canonical_offset", "INTEGER")
+  _ensure_column(conn, "bookmarks", "anchor_text", "TEXT")
   _ensure_column(conn, "bookmarks", "label", "TEXT")
   _ensure_column(conn, "bookmarks", "created_at", "TEXT")
+
+  # Backfill bookmark anchors for legacy percent-based bookmarks.
+  bookmarks_to_backfill = conn.execute(
+    """
+    SELECT id, book_id, chapter_index, chapter_percent, chapter_href, anchor_canonical_offset, anchor_text
+    FROM bookmarks
+    WHERE chapter_index IS NOT NULL
+    """
+  ).fetchall()
+  for bookmark in bookmarks_to_backfill:
+    bookmark_id = bookmark["id"]
+    book_id = bookmark["book_id"]
+    chapter_index = bookmark["chapter_index"]
+    chapter_percent = bookmark["chapter_percent"]
+    chapter_href = bookmark["chapter_href"]
+    anchor_offset = bookmark["anchor_canonical_offset"]
+    anchor_text = bookmark["anchor_text"]
+
+    resolved_href = chapter_href
+    if not resolved_href:
+      chapter_row = conn.execute(
+        "SELECT spine_href FROM chapters WHERE book_id = ? AND chapter_index = ?",
+        (book_id, chapter_index),
+      ).fetchone()
+      resolved_href = chapter_row["spine_href"] if chapter_row and chapter_row["spine_href"] else None
+      if resolved_href:
+        conn.execute("UPDATE bookmarks SET chapter_href = ? WHERE id = ?", (resolved_href, bookmark_id))
+
+    resolved_offset = anchor_offset
+    if resolved_offset is None and chapter_percent is not None:
+      max_row = conn.execute(
+        "SELECT MAX(canonical_end) AS max_end FROM chunks WHERE book_id = ? AND chapter_index = ?",
+        (book_id, chapter_index),
+      ).fetchone()
+      max_end = int(max_row["max_end"] or 0) if max_row else 0
+      if max_end > 0:
+        pct = max(0.0, min(100.0, float(chapter_percent)))
+        candidate = int(round((pct / 100.0) * max_end))
+        resolved_offset = max(0, min(max_end - 1, candidate))
+        conn.execute(
+          "UPDATE bookmarks SET anchor_canonical_offset = ? WHERE id = ?",
+          (resolved_offset, bookmark_id),
+        )
+
+    if not anchor_text and resolved_offset is not None:
+      chunk_row = conn.execute(
+        """
+        SELECT anchor_text
+        FROM chunks
+        WHERE book_id = ? AND chapter_index = ?
+          AND canonical_start <= ? AND canonical_end > ?
+        ORDER BY position_index ASC, id ASC
+        LIMIT 1
+        """,
+        (book_id, chapter_index, int(resolved_offset), int(resolved_offset)),
+      ).fetchone()
+      if not chunk_row or not chunk_row["anchor_text"]:
+        chunk_row = conn.execute(
+          """
+          SELECT anchor_text
+          FROM chunks
+          WHERE book_id = ? AND chapter_index = ?
+          ORDER BY ABS(COALESCE(canonical_start, 0) - ?) ASC, position_index ASC, id ASC
+          LIMIT 1
+          """,
+          (book_id, chapter_index, int(resolved_offset)),
+        ).fetchone()
+      resolved_text = chunk_row["anchor_text"] if chunk_row and chunk_row["anchor_text"] else None
+      if resolved_text:
+        conn.execute("UPDATE bookmarks SET anchor_text = ? WHERE id = ?", (resolved_text[:240], bookmark_id))
 
 
 def connect() -> sqlite3.Connection:

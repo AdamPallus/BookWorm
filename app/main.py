@@ -2,7 +2,7 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -87,6 +87,9 @@ class BookmarkPayload(BaseModel):
   chapter_index: Optional[int] = None
   chapter_percent: Optional[float] = None
   book_percent: Optional[float] = None
+  chapter_href: Optional[str] = None
+  anchor_canonical_offset: Optional[int] = None
+  anchor_text: Optional[str] = None
   label: Optional[str] = None
 
 
@@ -192,6 +195,73 @@ def _save_conversation(
 
 def _canonical_alnum_len(text: str) -> int:
   return len(CANONICAL_NON_ALNUM_RE.sub("", (text or "").lower()))
+
+
+def _normalize_href(href: Optional[str]) -> Optional[str]:
+  value = (href or "").strip()
+  if not value:
+    return None
+  return value.split("#")[0].strip() or None
+
+
+def _chapter_href(conn, book_id: int, chapter_index: Optional[int]) -> Optional[str]:
+  if chapter_index is None:
+    return None
+  row = conn.execute(
+    "SELECT spine_href FROM chapters WHERE book_id = ? AND chapter_index = ?",
+    (book_id, chapter_index),
+  ).fetchone()
+  if not row:
+    return None
+  return _normalize_href(row["spine_href"])
+
+
+def _chapter_anchor_from_percent(
+  conn,
+  book_id: int,
+  chapter_index: Optional[int],
+  chapter_percent: Optional[float],
+) -> Tuple[Optional[int], Optional[str]]:
+  if chapter_index is None or chapter_percent is None:
+    return None, None
+
+  max_row = conn.execute(
+    "SELECT MAX(canonical_end) AS max_end FROM chunks WHERE book_id = ? AND chapter_index = ?",
+    (book_id, chapter_index),
+  ).fetchone()
+  max_end = int(max_row["max_end"] or 0) if max_row else 0
+  if max_end <= 0:
+    return None, None
+
+  pct = max(0.0, min(100.0, float(chapter_percent)))
+  candidate = int(round((pct / 100.0) * max_end))
+  offset = max(0, min(max_end - 1, candidate))
+
+  chunk_row = conn.execute(
+    """
+    SELECT anchor_text
+    FROM chunks
+    WHERE book_id = ? AND chapter_index = ?
+      AND canonical_start <= ? AND canonical_end > ?
+    ORDER BY position_index ASC, id ASC
+    LIMIT 1
+    """,
+    (book_id, chapter_index, offset, offset),
+  ).fetchone()
+  if not chunk_row or not chunk_row["anchor_text"]:
+    chunk_row = conn.execute(
+      """
+      SELECT anchor_text
+      FROM chunks
+      WHERE book_id = ? AND chapter_index = ?
+      ORDER BY ABS(COALESCE(canonical_start, 0) - ?) ASC, position_index ASC, id ASC
+      LIMIT 1
+      """,
+      (book_id, chapter_index, offset),
+    ).fetchone()
+  anchor_text = chunk_row["anchor_text"] if chunk_row and chunk_row["anchor_text"] else None
+  anchor_text = anchor_text[:240] if anchor_text else None
+  return offset, anchor_text
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -662,7 +732,18 @@ def get_bookmarks(book_id: int):
     _book_row_or_404(conn, book_id)
     rows = conn.execute(
       """
-      SELECT id, book_id, cfi, chapter_index, chapter_percent, book_percent, label, created_at
+      SELECT
+        id,
+        book_id,
+        cfi,
+        chapter_index,
+        chapter_percent,
+        book_percent,
+        chapter_href,
+        anchor_canonical_offset,
+        anchor_text,
+        label,
+        created_at
       FROM bookmarks
       WHERE book_id = ?
       ORDER BY created_at DESC, id DESC
@@ -698,27 +779,69 @@ def toggle_bookmark(book_id: int, payload: BookmarkPayload):
     chapter_percent = None
     if payload.chapter_percent is not None:
       chapter_percent = max(0.0, min(100.0, float(payload.chapter_percent)))
+    chapter_index = int(payload.chapter_index) if payload.chapter_index is not None else None
     book_percent = None
     if payload.book_percent is not None:
       book_percent = max(0.0, min(100.0, float(payload.book_percent)))
+    chapter_href = _normalize_href(payload.chapter_href)
+    if not chapter_href:
+      chapter_href = _chapter_href(conn, book_id, chapter_index)
+    anchor_offset = None
+    if payload.anchor_canonical_offset is not None:
+      anchor_offset = max(0, int(payload.anchor_canonical_offset))
+    anchor_text = (payload.anchor_text or "").strip() or None
+    if anchor_text:
+      anchor_text = anchor_text[:240]
+
+    derived_offset = None
+    derived_text = None
+    if anchor_offset is None:
+      derived_offset, derived_text = _chapter_anchor_from_percent(conn, book_id, chapter_index, chapter_percent)
+      anchor_offset = derived_offset
+    if not anchor_text and derived_text:
+      anchor_text = derived_text
 
     conn.execute(
       """
-      INSERT INTO bookmarks (book_id, cfi, chapter_index, chapter_percent, book_percent, label)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO bookmarks (
+        book_id,
+        cfi,
+        chapter_index,
+        chapter_percent,
+        book_percent,
+        chapter_href,
+        anchor_canonical_offset,
+        anchor_text,
+        label
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       """,
       (
         int(book_id),
         cfi,
-        payload.chapter_index,
+        chapter_index,
         chapter_percent,
         book_percent,
+        chapter_href,
+        anchor_offset,
+        anchor_text,
         payload.label.strip() if payload.label else None,
       ),
     )
     row = conn.execute(
       """
-      SELECT id, book_id, cfi, chapter_index, chapter_percent, book_percent, label, created_at
+      SELECT
+        id,
+        book_id,
+        cfi,
+        chapter_index,
+        chapter_percent,
+        book_percent,
+        chapter_href,
+        anchor_canonical_offset,
+        anchor_text,
+        label,
+        created_at
       FROM bookmarks
       WHERE book_id = ? AND cfi = ?
       """,
