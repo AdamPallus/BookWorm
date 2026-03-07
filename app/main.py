@@ -50,6 +50,7 @@ class PositionUpdate(BaseModel):
   chapter_percent: Optional[float] = None
   book_percent: Optional[float] = None
   percent: Optional[float] = None
+  char_offset: Optional[int] = None
   cfi: Optional[str] = None
 
 
@@ -61,6 +62,7 @@ class QueryRequest(BaseModel):
   ask_chapter_index: Optional[int] = None
   ask_chapter_percent: Optional[float] = None
   ask_book_percent: Optional[float] = None
+  ask_char_offset: Optional[int] = None
 
 
 class SettingsUpdate(BaseModel):
@@ -170,12 +172,13 @@ def _save_conversation(
   ask_chapter_index: Optional[int] = None,
   ask_chapter_percent: Optional[float] = None,
   ask_book_percent: Optional[float] = None,
+  ask_char_offset: Optional[int] = None,
 ):
   conn.execute(
     """
     INSERT INTO conversations
-      (book_id, question, answer, model, position_context, ask_cfi, ask_chapter_index, ask_chapter_percent, ask_book_percent, sources_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (book_id, question, answer, model, position_context, ask_cfi, ask_chapter_index, ask_chapter_percent, ask_book_percent, ask_char_offset, sources_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """,
     (
       book_id,
@@ -187,6 +190,7 @@ def _save_conversation(
       ask_chapter_index,
       ask_chapter_percent,
       ask_book_percent,
+      ask_char_offset,
       json.dumps(sources, ensure_ascii=False),
     ),
   )
@@ -666,6 +670,9 @@ def set_position(book_id: int, payload: PositionUpdate):
     end_pos = chapter["end_position"] or start_pos
     span = max(0, end_pos - start_pos)
     pos_index = int(start_pos + span * (chapter_percent / 100.0))
+    char_offset = None
+    if payload.char_offset is not None:
+      char_offset = max(0, int(payload.char_offset))
 
     book_percent = payload.book_percent if payload.book_percent is not None else None
     if book_percent is not None:
@@ -673,17 +680,18 @@ def set_position(book_id: int, payload: PositionUpdate):
 
     conn.execute(
       """
-      INSERT INTO book_positions (book_id, chapter_index, chapter_percent, book_percent, position_index, cfi, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO book_positions (book_id, chapter_index, chapter_percent, book_percent, position_index, char_offset, cfi, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(book_id) DO UPDATE SET
         chapter_index = excluded.chapter_index,
         chapter_percent = excluded.chapter_percent,
         book_percent = excluded.book_percent,
         position_index = excluded.position_index,
+        char_offset = excluded.char_offset,
         cfi = excluded.cfi,
         updated_at = CURRENT_TIMESTAMP
       """,
-      (book_id, chapter_index, chapter_percent, book_percent, pos_index, payload.cfi),
+      (book_id, chapter_index, chapter_percent, book_percent, pos_index, char_offset, payload.cfi),
     )
     conn.commit()
 
@@ -693,6 +701,7 @@ def set_position(book_id: int, payload: PositionUpdate):
       "chapter_percent": chapter_percent,
       "book_percent": book_percent,
       "position_index": pos_index,
+      "char_offset": char_offset,
       "cfi": payload.cfi,
     }
   finally:
@@ -893,6 +902,9 @@ def query(book_id: int, payload: QueryRequest):
   ask_book_percent = None
   if payload.ask_book_percent is not None:
     ask_book_percent = max(0.0, min(100.0, float(payload.ask_book_percent)))
+  ask_char_offset = None
+  if payload.ask_char_offset is not None:
+    ask_char_offset = max(0, int(payload.ask_char_offset))
   if pos_row:
     if ask_cfi is None:
       ask_cfi = pos_row["cfi"]
@@ -902,6 +914,8 @@ def query(book_id: int, payload: QueryRequest):
       ask_chapter_percent = max(0.0, min(100.0, float(pos_row["chapter_percent"])))
     if ask_book_percent is None and pos_row["book_percent"] is not None:
       ask_book_percent = max(0.0, min(100.0, float(pos_row["book_percent"])))
+    if ask_char_offset is None and pos_row["char_offset"] is not None:
+      ask_char_offset = max(0, int(pos_row["char_offset"]))
 
   model = _validate_model(payload.model) if payload.model else _current_model(conn)
   citation_debug_mode = _current_citation_debug_mode(conn)
@@ -962,6 +976,7 @@ def query(book_id: int, payload: QueryRequest):
           ask_chapter_index=ask_chapter_index,
           ask_chapter_percent=ask_chapter_percent,
           ask_book_percent=ask_book_percent,
+          ask_char_offset=ask_char_offset,
         )
         yield _line({"type": "done", "data": {"answer": answer, "sources": []}})
         return
@@ -987,6 +1002,7 @@ def query(book_id: int, payload: QueryRequest):
         ask_chapter_index=ask_chapter_index,
         ask_chapter_percent=ask_chapter_percent,
         ask_book_percent=ask_book_percent,
+        ask_char_offset=ask_char_offset,
       )
       yield _line({"type": "done", "data": {"answer": answer, "sources": sources}})
     except Exception as exc:

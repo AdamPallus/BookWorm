@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS book_positions (
   chapter_percent REAL,
   book_percent REAL,
   position_index INTEGER,
+  char_offset INTEGER,
   cfi TEXT,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   ask_chapter_index INTEGER,
   ask_chapter_percent REAL,
   ask_book_percent REAL,
+  ask_char_offset INTEGER,
   sources_json TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -168,6 +170,7 @@ def _migrate(conn: sqlite3.Connection):
 
   _ensure_column(conn, "book_positions", "chapter_percent", "REAL")
   _ensure_column(conn, "book_positions", "book_percent", "REAL")
+  _ensure_column(conn, "book_positions", "char_offset", "INTEGER")
   _ensure_column(conn, "book_positions", "cfi", "TEXT")
   _ensure_column(conn, "book_positions", "updated_at", "TEXT")
   conn.execute(
@@ -191,6 +194,7 @@ def _migrate(conn: sqlite3.Connection):
         ask_chapter_index INTEGER,
         ask_chapter_percent REAL,
         ask_book_percent REAL,
+        ask_char_offset INTEGER,
         sources_json TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
@@ -202,6 +206,7 @@ def _migrate(conn: sqlite3.Connection):
   _ensure_column(conn, "conversations", "ask_chapter_index", "INTEGER")
   _ensure_column(conn, "conversations", "ask_chapter_percent", "REAL")
   _ensure_column(conn, "conversations", "ask_book_percent", "REAL")
+  _ensure_column(conn, "conversations", "ask_char_offset", "INTEGER")
 
   # Ensure bookmark storage exists for per-book saved reading points.
   conn.execute(

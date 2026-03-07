@@ -1430,6 +1430,7 @@
         chapter_index: entry.ask_chapter_index != null ? entry.ask_chapter_index : null,
         chapter_percent: entry.ask_chapter_percent != null ? entry.ask_chapter_percent : null,
         book_percent: entry.ask_book_percent != null ? entry.ask_book_percent : null,
+        char_offset: entry.ask_char_offset != null ? entry.ask_char_offset : null,
         position_index: entry.position_context != null ? entry.position_context : null,
       };
     }
@@ -1670,7 +1671,8 @@
     function buildPageBreaks(container) {
       const contentEl = getContentElement();
       if (!contentEl) return [0];
-      const cacheKey = container.scrollHeight + ':' + container.clientHeight;
+      const spacer = getPageSpacer(container, true);
+      const cacheKey = `${contentEl.scrollHeight}:${contentEl.clientWidth}:${container.clientHeight}`;
       if (_pageBreaksKey === cacheKey) return _pageBreaks;
 
       const viewport = Math.max(0, quantizePx(container.clientHeight));
@@ -1682,7 +1684,12 @@
         return _pageBreaks;
       }
 
-      const maxScroll = Math.max(0, quantizePx(container.scrollHeight - viewport));
+      const currentSpacerHeight = Math.max(0, quantizePx(spacer ? spacer.offsetHeight : 0));
+      const baseScrollHeight = Math.max(
+        viewport,
+        quantizePx(contentEl.scrollHeight),
+        quantizePx(container.scrollHeight - currentSpacerHeight),
+      );
       const lines = collectLineMetrics(contentEl);
       const breaks = [0];
       const clipHeights = [];
@@ -1700,12 +1707,16 @@
         clipHeights.push(Math.max(0, Math.ceil(pageBottom - lastFullBottom)));
         if (overflowIndex >= lines.length) break;
         const nextStart = Math.max(pageStart + 1, Math.round(lines[overflowIndex].top));
-        if (nextStart > maxScroll) {
-          break;
-        }
         breaks.push(nextStart);
         pageStart = nextStart;
         lineIndex = overflowIndex;
+      }
+
+      const requiredMaxScroll = breaks.length ? breaks[breaks.length - 1] : 0;
+      const currentMaxScroll = Math.max(0, quantizePx(baseScrollHeight - viewport));
+      const requiredSpacerHeight = Math.max(0, Math.ceil(requiredMaxScroll - currentMaxScroll));
+      if (spacer && Math.abs(requiredSpacerHeight - currentSpacerHeight) > 0.5) {
+        spacer.style.height = `${requiredSpacerHeight}px`;
       }
 
       _pageBreaks = breaks;
@@ -1734,6 +1745,17 @@
 
     function computeCurrentPage() {
       return _currentPageIndex;
+    }
+
+    function getPageSpacer(container, create = false) {
+      let spacer = container.querySelector('.bw-page-spacer');
+      if (!spacer && create) {
+        spacer = document.createElement('div');
+        spacer.className = 'bw-page-spacer';
+        spacer.style.cssText = 'width:100%;height:0;pointer-events:none;';
+        container.appendChild(spacer);
+      }
+      return spacer;
     }
 
     function verifyNoClip(container) {
@@ -2837,7 +2859,7 @@
       updateVirtualChapterControls();
       els.chapterJumpSelect.disabled = true;
 
-      const hydratedHistory = (convoData.conversations || []).map(c => ({ question: c.question, answer: c.answer, sources: c.sources || [], position_context: c.position_context, ask_cfi: c.ask_cfi || null, ask_chapter_index: c.ask_chapter_index != null ? c.ask_chapter_index : null, ask_chapter_percent: c.ask_chapter_percent != null ? c.ask_chapter_percent : null, ask_book_percent: c.ask_book_percent != null ? c.ask_book_percent : null, timestamp: c.created_at }));
+      const hydratedHistory = (convoData.conversations || []).map(c => ({ question: c.question, answer: c.answer, sources: c.sources || [], position_context: c.position_context, ask_cfi: c.ask_cfi || null, ask_chapter_index: c.ask_chapter_index != null ? c.ask_chapter_index : null, ask_chapter_percent: c.ask_chapter_percent != null ? c.ask_chapter_percent : null, ask_book_percent: c.ask_book_percent != null ? c.ask_book_percent : null, ask_char_offset: c.ask_char_offset != null ? c.ask_char_offset : null, timestamp: c.created_at }));
       state.answerHistory = hydratedHistory.slice(-40); state.answerHistoryIndex = state.answerHistory.length - 1;
       updateAnswerHistoryControls(); renderAnswerHistory(); updateReaderProgressText();
 
@@ -2896,7 +2918,27 @@
       const ae = entry || state.answerHistory[state.answerHistoryIndex] || null;
       const al = askLocationForEntry(ae);
       if (!al || al.chapter_index == null) { showReaderStatusMessage('Question location is unavailable.'); return; }
-      try { clearCitationHighlights(); closeReaderPanels(); await loadChapter(al.chapter_index, 0); afterPageChange(); closeQaPanel(); }
+      try {
+        clearCitationHighlights();
+        closeReaderPanels();
+        await loadChapter(al.chapter_index, 0);
+        const contentEl = getContentElement();
+        const container = getReaderContainer();
+        if (contentEl && container) {
+          const tni = buildTextNodeIndex(contentEl);
+          if (al.char_offset != null) {
+            scrollToCharOffset(container, contentEl, tni, Math.max(0, asNumber(al.char_offset, 0)), 0);
+          } else if (al.chapter_percent != null) {
+            const totalChars = tni.length ? tni[tni.length - 1].endChar : 0;
+            if (totalChars > 0) {
+              const approxCharOffset = Math.round(totalChars * (clamp(asNumber(al.chapter_percent, 0), 0, 100) / 100));
+              scrollToCharOffset(container, contentEl, tni, approxCharOffset, 0);
+            }
+          }
+        }
+        afterPageChange();
+        closeQaPanel();
+      }
       catch (err) { showReaderStatusMessage('Could not return to question location.'); }
     }
 
@@ -2936,10 +2978,10 @@
       if (!question || state.isAsking || !state.currentBookId) return;
       if (state.currentBook && state.currentBook.embedding_status !== 'ready') { alert('This book is still indexing.'); return; }
       state.isAsking = true; els.qaSendBtn.disabled = true; els.qaInput.value = '';
-      const entry = { question, answer: '', sources: [], position_context: state.currentPosition && state.currentPosition.position_index != null ? state.currentPosition.position_index : null, ask_cfi: null, ask_chapter_index: state.currentPosition && state.currentPosition.chapter_index != null ? state.currentPosition.chapter_index : null, ask_chapter_percent: state.currentPosition && state.currentPosition.chapter_percent != null ? state.currentPosition.chapter_percent : null, ask_book_percent: state.currentPosition && state.currentPosition.book_percent != null ? state.currentPosition.book_percent : null, timestamp: new Date().toISOString(), pending: true };
+      const entry = { question, answer: '', sources: [], position_context: state.currentPosition && state.currentPosition.position_index != null ? state.currentPosition.position_index : null, ask_cfi: null, ask_chapter_index: state.currentPosition && state.currentPosition.chapter_index != null ? state.currentPosition.chapter_index : null, ask_chapter_percent: state.currentPosition && state.currentPosition.chapter_percent != null ? state.currentPosition.chapter_percent : null, ask_book_percent: state.currentPosition && state.currentPosition.book_percent != null ? state.currentPosition.book_percent : null, ask_char_offset: Number.isFinite(state.currentCharOffset) ? state.currentCharOffset : null, timestamp: new Date().toISOString(), pending: true };
       pushAnswerHistory(entry); openQaPanel();
       try {
-        const res = await fetch(`/api/books/${state.currentBookId}/query`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, position_index: entry.position_context, model: els.qaModelSelect.value, ask_chapter_index: entry.ask_chapter_index, ask_chapter_percent: entry.ask_chapter_percent, ask_book_percent: entry.ask_book_percent }) });
+        const res = await fetch(`/api/books/${state.currentBookId}/query`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, position_index: entry.position_context, model: els.qaModelSelect.value, ask_chapter_index: entry.ask_chapter_index, ask_chapter_percent: entry.ask_chapter_percent, ask_book_percent: entry.ask_book_percent, ask_char_offset: entry.ask_char_offset }) });
         if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Query failed'); }
         const reader = res.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
         while (true) {
