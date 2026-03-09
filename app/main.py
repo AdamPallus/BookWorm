@@ -35,6 +35,8 @@ DEFAULT_MODEL = "gpt-5-mini"
 DEFAULT_FONT_SIZE = 100
 ALLOWED_READER_SPREADS = ["single", "double"]
 DEFAULT_READER_SPREAD = "single"
+ALLOWED_READER_MODES = ["auto", "paginated", "scroll"]
+DEFAULT_READER_MODE = "auto"
 DEFAULT_READER_WIDTH_PX = 980
 MIN_READER_WIDTH_PX = 760
 MAX_READER_WIDTH_PX = 1320
@@ -70,6 +72,7 @@ class SettingsUpdate(BaseModel):
   model: Optional[str] = None
   reader_font_size: Optional[int] = None
   reader_spread: Optional[str] = None
+  reader_mode: Optional[str] = None
   reader_width_px: Optional[int] = None
   reader_bottom_padding_px: Optional[int] = None
   citation_debug_mode: Optional[bool] = None
@@ -128,6 +131,11 @@ def _current_font_size(conn) -> int:
 def _current_reader_spread(conn) -> str:
   raw = get_setting(conn, "reader_spread", DEFAULT_READER_SPREAD)
   return raw if raw in ALLOWED_READER_SPREADS else DEFAULT_READER_SPREAD
+
+
+def _current_reader_mode(conn) -> str:
+  raw = get_setting(conn, "reader_mode", DEFAULT_READER_MODE)
+  return raw if raw in ALLOWED_READER_MODES else DEFAULT_READER_MODE
 
 
 def _current_reader_width_px(conn) -> int:
@@ -322,6 +330,8 @@ def get_settings():
     "reader_font_size": _current_font_size(conn),
     "reader_spread": _current_reader_spread(conn),
     "reader_spread_options": ALLOWED_READER_SPREADS,
+    "reader_mode": _current_reader_mode(conn),
+    "reader_mode_options": ALLOWED_READER_MODES,
     "reader_width_px": _current_reader_width_px(conn),
     "reader_width_px_min": MIN_READER_WIDTH_PX,
     "reader_width_px_max": MAX_READER_WIDTH_PX,
@@ -357,6 +367,11 @@ def save_settings(payload: SettingsUpdate):
         raise HTTPException(status_code=400, detail=f"Unsupported reader_spread '{payload.reader_spread}'")
       set_setting(conn, "reader_spread", payload.reader_spread)
 
+    if payload.reader_mode is not None:
+      if payload.reader_mode not in ALLOWED_READER_MODES:
+        raise HTTPException(status_code=400, detail=f"Unsupported reader_mode '{payload.reader_mode}'")
+      set_setting(conn, "reader_mode", payload.reader_mode)
+
     if payload.reader_width_px is not None:
       width = max(MIN_READER_WIDTH_PX, min(MAX_READER_WIDTH_PX, int(payload.reader_width_px)))
       set_setting(conn, "reader_width_px", str(width))
@@ -381,6 +396,8 @@ def save_settings(payload: SettingsUpdate):
       "reader_font_size": _current_font_size(conn),
       "reader_spread": _current_reader_spread(conn),
       "reader_spread_options": ALLOWED_READER_SPREADS,
+      "reader_mode": _current_reader_mode(conn),
+      "reader_mode_options": ALLOWED_READER_MODES,
       "reader_width_px": _current_reader_width_px(conn),
       "reader_width_px_min": MIN_READER_WIDTH_PX,
       "reader_width_px_max": MAX_READER_WIDTH_PX,

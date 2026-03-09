@@ -444,6 +444,27 @@
       height: 100%;
       flex: 1;
       min-height: 0;
+      overflow-x: hidden;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
+
+    .reader-shell[data-active-reader-mode="scroll"] .turn-zone {
+      display: none;
+    }
+
+    .bw-scroll-chapter-nav {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      padding: 14px 24px 28px;
+      border-top: 1px solid rgba(232, 224, 212, 0.12);
+      margin-top: 8px;
+    }
+
+    .bw-scroll-chapter-nav button {
+      min-width: 132px;
     }
 
     .reader-searchbar {
@@ -1213,6 +1234,15 @@
       </div>
 
       <div class="field">
+        <label for="readerModeSelect">Reader mode</label>
+        <select id="readerModeSelect">
+          <option value="auto">Auto</option>
+          <option value="paginated">Paginated</option>
+          <option value="scroll">Scroll</option>
+        </select>
+      </div>
+
+      <div class="field">
         <label for="readerWidthInput">Reader width</label>
         <input id="readerWidthInput" type="range" min="760" max="1320" step="10" />
         <div id="readerWidthValue" class="range-value">980px</div>
@@ -1319,6 +1349,7 @@
       virtualChapters: { enabled: false, pattern: null, detection_mode: "strict", toc_display_mode: 'merged', entries: [] },
       controlsCollapsed: false, controlsLayoutTimer: null, controlsMetricsTimer: null,
       syncPromptPosition: null, syncPromptDismissedKey: null,
+      activeReaderMode: 'paginated', readerScrollTimer: null,
       // Paginator
       chapterHtmlCache: {}, currentChapterIndex: 0, totalChapters: 0,
       currentCharOffset: 0, currentPage: 0, totalPages: 1, spineItems: [],
@@ -1389,6 +1420,7 @@
       currentKey: document.getElementById('currentKey'),
       modelSelect: document.getElementById('modelSelect'),
       spreadSelect: document.getElementById('spreadSelect'),
+      readerModeSelect: document.getElementById('readerModeSelect'),
       fontSizeInput: document.getElementById('fontSizeInput'),
       readerWidthInput: document.getElementById('readerWidthInput'),
       readerWidthValue: document.getElementById('readerWidthValue'),
@@ -1490,6 +1522,15 @@
         return { node: last.node, offset: last.node.textContent.length };
       }
       return null;
+    }
+
+    function hintIndexForCharOffset(textNodeIndex, charOffset) {
+      const offset = Math.max(0, asNumber(charOffset, 0));
+      for (let i = 0; i < textNodeIndex.length; i++) {
+        const entry = textNodeIndex[i];
+        if (offset < entry.endChar) return i;
+      }
+      return Math.max(0, textNodeIndex.length - 1);
     }
 
     function computeCharOffsetFromScroll(container, textNodeIndex, startIndex = 0) {
@@ -1614,8 +1655,123 @@
       }
     }
 
-        function getReaderContainer() { return els.readerSurface; }
+    function resetContainerSnap(container) {
+      if (!container) return;
+      container.style.height = '';
+      container.style.flex = '1';
+    }
+
+    function storedReaderMode() {
+      const raw = state.settings && state.settings.reader_mode;
+      return raw === 'scroll' || raw === 'paginated' || raw === 'auto' ? raw : 'auto';
+    }
+
+    function isPhoneLikeViewport() {
+      const vv = window.visualViewport;
+      const width = vv && Number.isFinite(vv.width) ? vv.width : window.innerWidth;
+      const height = vv && Number.isFinite(vv.height) ? vv.height : window.innerHeight;
+      const shortSide = Math.min(width || 0, height || 0);
+      const coarse = window.matchMedia ? window.matchMedia('(pointer: coarse)').matches : false;
+      return coarse && shortSide > 0 && shortSide <= 767;
+    }
+
+    function resolvedReaderMode() {
+      const mode = storedReaderMode();
+      return mode === 'auto' ? (isPhoneLikeViewport() ? 'scroll' : 'paginated') : mode;
+    }
+
+    function isScrollMode() { return resolvedReaderMode() === 'scroll'; }
+
+    function getReaderContainer() { return els.readerSurface; }
     function getContentElement() { return els.readerSurface.querySelector('.bw-chapter-content'); }
+
+    function clearPageClip(container) {
+      if (!container) return;
+      container.style.clipPath = '';
+      const mask = container.parentElement && container.parentElement.querySelector('.bw-page-mask');
+      if (mask) mask.style.display = 'none';
+    }
+
+    async function navigateAdjacentChapter(direction) {
+      if (!state.readerReady) return false;
+      const delta = direction === 'prev' ? -1 : 1;
+      const nextChapterIndex = state.currentChapterIndex + delta;
+      if (nextChapterIndex < 0 || nextChapterIndex >= state.totalChapters) return false;
+      await loadChapter(nextChapterIndex, 0);
+      afterPageChange();
+      return true;
+    }
+
+    function syncScrollChapterNav() {
+      const container = getReaderContainer();
+      if (!container) return;
+      const existing = container.querySelector('.bw-scroll-chapter-nav');
+      if (!isScrollMode()) {
+        if (existing) existing.remove();
+        return;
+      }
+      const hasPrev = state.currentChapterIndex > 0;
+      const hasNext = state.currentChapterIndex < state.totalChapters - 1;
+      let nav = existing;
+      if (!nav) {
+        nav = document.createElement('div');
+        nav.className = 'bw-scroll-chapter-nav';
+        container.appendChild(nav);
+      }
+      nav.innerHTML = '';
+      if (!hasPrev && !hasNext) {
+        nav.remove();
+        return;
+      }
+      if (hasPrev) {
+        const prevBtn = document.createElement('button');
+        prevBtn.className = 'nav-btn';
+        prevBtn.type = 'button';
+        prevBtn.textContent = 'Prev chapter';
+        prevBtn.addEventListener('click', () => { navigateAdjacentChapter('prev').catch(() => {}); });
+        nav.appendChild(prevBtn);
+      }
+      if (hasNext) {
+        const nextBtn = document.createElement('button');
+        nextBtn.className = 'nav-btn';
+        nextBtn.type = 'button';
+        nextBtn.textContent = 'Next chapter';
+        nextBtn.addEventListener('click', () => { navigateAdjacentChapter('next').catch(() => {}); });
+        nav.appendChild(nextBtn);
+      }
+    }
+
+    function configureReaderMode() {
+      const mode = resolvedReaderMode();
+      state.activeReaderMode = mode;
+      els.readerView.dataset.activeReaderMode = mode;
+      const container = getReaderContainer();
+      if (container) {
+        if (mode === 'scroll') resetContainerSnap(container);
+        container.style.overflow = mode === 'scroll' ? 'auto' : 'hidden';
+        container.style.overflowX = 'hidden';
+        container.style.overflowY = mode === 'scroll' ? 'auto' : 'hidden';
+        container.style.position = 'relative';
+        if (mode === 'scroll') clearPageClip(container);
+      }
+      const paginatedReady = state.readerReady && mode === 'paginated';
+      const scrollReady = state.readerReady && mode === 'scroll';
+      els.turnLeft.classList.toggle('disabled', !paginatedReady);
+      els.turnRight.classList.toggle('disabled', !paginatedReady);
+      els.prevPageBtn.textContent = scrollReady ? 'Prev chapter' : 'Prev';
+      els.nextPageBtn.textContent = scrollReady ? 'Next chapter' : 'Next';
+      els.prevPageBtn.title = scrollReady ? 'Previous chapter' : 'Previous page';
+      els.nextPageBtn.title = scrollReady ? 'Next chapter' : 'Next page';
+      if (scrollReady) {
+        els.prevPageBtn.disabled = state.currentChapterIndex <= 0;
+        els.nextPageBtn.disabled = state.currentChapterIndex >= state.totalChapters - 1;
+      } else {
+        els.prevPageBtn.disabled = !paginatedReady;
+        els.nextPageBtn.disabled = !paginatedReady;
+      }
+      syncScrollChapterNav();
+      return mode;
+    }
 
     function quantizePx(value) {
       const dpr = window.devicePixelRatio || 1;
@@ -1788,8 +1944,7 @@
 
 
     function applyPageClip(container) {
-      // Remove old clip
-      container.style.clipPath = '';
+      clearPageClip(container);
       let mask = container.parentElement.querySelector('.bw-page-mask');
       const breaks = buildPageBreaks(container);
       const i = _currentPageIndex;
@@ -1847,8 +2002,40 @@
       return true;
     }
 
+    function syncScrollPosition(options = {}) {
+      if (!state.readerReady) return;
+      const container = getReaderContainer(), contentEl = getContentElement();
+      if (!container || !contentEl) return;
+      clearPageClip(container);
+      const textNodeIndex = buildTextNodeIndex(contentEl);
+      const hintIndex = hintIndexForCharOffset(textNodeIndex, state.currentCharOffset);
+      const charOffset = computeCharOffsetFromScroll(container, textNodeIndex, hintIndex);
+      state.currentCharOffset = charOffset;
+      state.currentPage = 0;
+      state.totalPages = 1;
+      const totalChars = textNodeIndex.length ? textNodeIndex[textNodeIndex.length - 1].endChar : 1;
+      const chapterPercent = totalChars > 0 ? (charOffset / totalChars) * 100 : 0;
+      const bookPercent = state.totalChapters > 0 ? ((state.currentChapterIndex + chapterPercent / 100) / state.totalChapters) * 100 : 0;
+      state.currentPosition = { ...(state.currentPosition || {}), chapter_index: state.currentChapterIndex, chapter_percent: chapterPercent, book_percent: bookPercent, char_offset: charOffset };
+      updateReaderProgressText();
+      if (options.queue !== false) queuePositionUpdate({ chapter_index: state.currentChapterIndex, chapter_percent: chapterPercent, book_percent: bookPercent, char_offset: charOffset });
+      if (options.scheduleReturnDismiss !== false) scheduleReturnDismiss();
+    }
+
+    function scheduleReaderScrollSync(delayMs = 80) {
+      clearTimeout(state.readerScrollTimer);
+      state.readerScrollTimer = setTimeout(() => {
+        state.readerScrollTimer = null;
+        if (state.readerReady && isScrollMode()) syncScrollPosition();
+      }, delayMs);
+    }
+
     async function turnPage(direction) {
       if (!state.readerReady) return;
+      if (isScrollMode()) {
+        await navigateAdjacentChapter(direction);
+        return;
+      }
       if (direction === 'next') {
         if (!pageForward() && state.currentChapterIndex < state.totalChapters - 1) await loadChapter(state.currentChapterIndex + 1, 0);
       } else {
@@ -1857,8 +2044,12 @@
       afterPageChange();
     }
 
-    function afterPageChange() {
+    function afterPageChange(options = {}) {
       if (!state.readerReady) return;
+      if (isScrollMode()) {
+        syncScrollPosition(options);
+        return;
+      }
       const container = getReaderContainer(), contentEl = getContentElement();
       if (!container || !contentEl) return;
       // Sync page index from scroll position (for external jumps)
@@ -1882,8 +2073,8 @@
       state.currentPosition = { ...(state.currentPosition || {}), chapter_index: state.currentChapterIndex, chapter_percent: chapterPercent, book_percent: bookPercent, char_offset: charOffset };
       readerDiag('page:state', { pageIndex: state.currentPage, targetScrollTop: null, snappedScrollTop: container.scrollTop, metrics: containerMetrics(container) });
       updateReaderProgressText();
-      queuePositionUpdate({ chapter_index: state.currentChapterIndex, chapter_percent: chapterPercent, book_percent: bookPercent, char_offset: charOffset });
-      scheduleReturnDismiss();
+      if (options.queue !== false) queuePositionUpdate({ chapter_index: state.currentChapterIndex, chapter_percent: chapterPercent, book_percent: bookPercent, char_offset: charOffset });
+      if (options.scheduleReturnDismiss !== false) scheduleReturnDismiss();
     }
 
     /* ─────────── Chapter Loading ─────────── */
@@ -1938,21 +2129,27 @@
       if (imgs.length) await Promise.all(Array.from(imgs).map(img => img.complete ? Promise.resolve() : new Promise(r => { img.onload = r; img.onerror = r; })));
       const tni = buildTextNodeIndex(content);
       applyReaderSpread((state.settings && state.settings.reader_spread) || 'single');
-      snapContainerToLineHeight(container);
+      configureReaderMode();
+      if (!isScrollMode()) snapContainerToLineHeight(container);
       if (charOffset === Infinity) { container.scrollTop = clampScrollTop(container, container.scrollHeight); }
       else if (charOffset > 0) { scrollToCharOffset(container, content, tni, charOffset, 10); }
       else { container.scrollTop = 0; }
       state.currentCharOffset = charOffset === Infinity ? (tni.length ? tni[tni.length-1].endChar : 0) : charOffset;
       container.scrollTop = clampScrollTop(container, container.scrollTop);
-      // Invalidate and rebuild page breaks for the new chapter
       invalidatePageBreakCache();
-      const breaks = buildPageBreaks(container);
-      _currentPageIndex = findPageIndex(breaks, container.scrollTop);
-      // Snap to exact page boundary
-      container.scrollTop = breaks[_currentPageIndex] || 0;
-      state.currentPage = _currentPageIndex;
-      state.totalPages = breaks.length;
-      applyPageClip(container);
+      clearPageClip(container);
+      if (isScrollMode()) {
+        state.currentPage = 0;
+        state.totalPages = 1;
+      } else {
+        const breaks = buildPageBreaks(container);
+        _currentPageIndex = findPageIndex(breaks, container.scrollTop);
+        container.scrollTop = breaks[_currentPageIndex] || 0;
+        state.currentPage = _currentPageIndex;
+        state.totalPages = breaks.length;
+        applyPageClip(container);
+      }
+      syncScrollChapterNav();
       interceptInternalLinks(content, chapterData.href);
     }
 
@@ -2013,21 +2210,27 @@
       if (!state.readerReady) return;
       const container = getReaderContainer(), contentEl = getContentElement();
       if (!container || !contentEl) return;
-      // Invalidate page breaks — layout changed
+      configureReaderMode();
+      if (isScrollMode()) syncScrollPosition({ queue: false, scheduleReturnDismiss: false });
       invalidatePageBreakCache();
       const before = containerMetrics(container);
-      snapContainerToLineHeight(container);
+      if (!isScrollMode()) snapContainerToLineHeight(container);
       scrollToCharOffset(container, contentEl, buildTextNodeIndex(contentEl), state.currentCharOffset);
       container.scrollTop = clampScrollTop(container, container.scrollTop);
-      // Rebuild page breaks and snap to nearest page boundary
+      const after = containerMetrics(container);
+      if (isScrollMode()) {
+        clearPageClip(container);
+        readerDiag('reflow:restore', { mode: 'scroll', targetScrollTop: before.scrollTop, snappedScrollTop: after.scrollTop, metrics: after });
+        afterPageChange({ queue: false, scheduleReturnDismiss: false });
+        return;
+      }
       const breaks = buildPageBreaks(container);
       _currentPageIndex = findPageIndex(breaks, container.scrollTop);
       container.scrollTop = breaks[_currentPageIndex] || 0;
-      const after = containerMetrics(container);
-      readerDiag('reflow:restore', { pageIndex: _currentPageIndex, targetScrollTop: before.scrollTop, snappedScrollTop: after.scrollTop, metrics: after });
+      readerDiag('reflow:restore', { mode: 'paginated', pageIndex: _currentPageIndex, targetScrollTop: before.scrollTop, snappedScrollTop: after.scrollTop, metrics: after });
       state.currentPage = _currentPageIndex;
       state.totalPages = breaks.length;
-      updateReaderProgressText();
+      afterPageChange({ queue: false, scheduleReturnDismiss: false });
     }
     let reflowTimer = null;
     function scheduleReflow() { clearTimeout(reflowTimer); reflowTimer = setTimeout(handleReflow, 100); }
@@ -2722,7 +2925,7 @@
       const chapter = chapterFromIndex(pos.chapter_index);
       const chPct = Math.round(pos.chapter_percent || 0), bkPct = Math.round(pos.book_percent || 0);
       els.readerTitle.textContent = state.currentBook.title || 'Untitled';
-      const pp = state.totalPages > 1 ? ` · Page ${state.currentPage + 1}/${state.totalPages}` : '';
+      const pp = state.activeReaderMode === 'paginated' && state.totalPages > 1 ? ` · Page ${state.currentPage + 1}/${state.totalPages}` : '';
       els.readerProgress.textContent = chapter ? `Chapter ${chapter.chapter_index + 1} · ${chPct}%${pp} · ${bkPct}% of book` : `${bkPct}% of book`;
       updateQaContext((state.answerHistoryIndex >= 0 && state.answerHistory[state.answerHistoryIndex]) || null);
       updateBookmarkToggleState();
@@ -2764,11 +2967,23 @@
       fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reader_spread: next }) }).catch(() => {});
     }
 
+    function setReaderMode(mode, persist) {
+      const next = mode === 'scroll' || mode === 'paginated' ? mode : 'auto';
+      if (!state.settings) state.settings = {};
+      state.settings.reader_mode = next;
+      if (els.readerModeSelect) els.readerModeSelect.value = next;
+      configureReaderMode();
+      if (state.readerReady) scheduleReflow();
+      if (!persist) return;
+      fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reader_mode: next }) }).catch(() => {});
+    }
+
     /* ─────────── Keyboard ─────────── */
     function handleReaderArrowShortcut(event) {
       if (els.readerView.classList.contains('hidden') || !state.readerReady || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
       const tag = (event.target && event.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select' || (event.target && event.target.isContentEditable)) return;
+      if (isScrollMode()) return;
       if (event.key === 'ArrowRight' || event.key === 'PageDown') { event.preventDefault(); turnPage('next'); }
       else if (event.key === 'ArrowLeft' || event.key === 'PageUp') { event.preventDefault(); turnPage('prev'); }
     }
@@ -2829,6 +3044,7 @@
     function destroyReader() {
       clearTimeout(state.controlsLayoutTimer); state.controlsLayoutTimer = null;
       clearTimeout(state.controlsMetricsTimer); state.controlsMetricsTimer = null;
+      clearTimeout(state.readerScrollTimer); state.readerScrollTimer = null;
       clearTimeout(reflowTimer); reflowTimer = null;
       invalidatePageBreakCache();
       if (state.ebook) try { state.ebook.destroy(); } catch(e){}
@@ -2836,6 +3052,7 @@
       state.chapterHtmlCache = {}; state.currentChapterIndex = 0; state.totalChapters = 0;
       state.currentCharOffset = 0; state.currentPage = 0; state.totalPages = 1; state.spineItems = [];
       els.readerSurface.innerHTML = ''; els.readerSurface.style.overflow = ''; els.readerSurface.style.position = '';
+      delete els.readerView.dataset.activeReaderMode;
       els.readerStatus.classList.remove('visible'); els.readerStatus.textContent = '';
       els.turnLeft.classList.add('disabled'); els.turnRight.classList.add('disabled');
       els.prevPageBtn.disabled = true; els.nextPageBtn.disabled = true;
@@ -2885,7 +3102,7 @@
       state.totalChapters = state.spineItems.length;
       await loadReaderToc();
 
-      els.readerSurface.style.overflow = 'hidden'; els.readerSurface.style.position = 'relative';
+      configureReaderMode();
 
       let startChapter = 0, startCharOffset = 0;
       if (state.currentPosition) {
@@ -2902,8 +3119,7 @@
       state.readerReady = true;
       await loadBookmarks();
       els.readerStatus.classList.remove('visible'); els.readerStatus.textContent = '';
-      els.turnLeft.classList.remove('disabled'); els.turnRight.classList.remove('disabled');
-      els.prevPageBtn.disabled = false; els.nextPageBtn.disabled = false;
+      configureReaderMode();
       els.chapterJumpSelect.disabled = !state.chapters.length;
       els.bookmarksBtn.disabled = false; els.tocBtn.disabled = false; els.detectChaptersBtn.disabled = false; if (els.virtualChapterModeBtn) els.virtualChapterModeBtn.disabled = false; els.syncBtn.disabled = false; els.bookmarkToggleBtn.disabled = false; updateVirtualChapterControls();
       syncViewportMetrics(); afterPageChange();
@@ -3008,24 +3224,30 @@
       els.modelSelect.innerHTML = ''; els.qaModelSelect.innerHTML = '';
       (data.models || []).forEach(model => { for (const sel of [els.modelSelect, els.qaModelSelect]) { const o = document.createElement('option'); o.value = model; o.textContent = model; sel.appendChild(o); } });
       els.modelSelect.value = data.model; els.qaModelSelect.value = data.model; els.fontSizeInput.value = data.reader_font_size;
+      if (els.readerModeSelect) els.readerModeSelect.value = data.reader_mode || 'auto';
       setReaderSpread(data.reader_spread || 'single', false); applyReaderFontSize(data.reader_font_size);
       els.readerWidthInput.min = String(asNumber(data.reader_width_px_min, 760)); els.readerWidthInput.max = String(asNumber(data.reader_width_px_max, 1320));
       applyReaderWidth(asNumber(data.reader_width_px, 980));
+      configureReaderMode();
       els.citationDebugInput.checked = !!data.citation_debug_mode; renderAnswerHistory();
     }
 
     async function saveSettings() {
-      const payload = { model: els.modelSelect.value, reader_font_size: clamp(parseInt(els.fontSizeInput.value || '100', 10), 70, 160), reader_spread: els.spreadSelect.value, reader_width_px: Math.round(asNumber(els.readerWidthInput.value, 980)), citation_debug_mode: !!els.citationDebugInput.checked };
+      const payload = { model: els.modelSelect.value, reader_font_size: clamp(parseInt(els.fontSizeInput.value || '100', 10), 70, 160), reader_spread: els.spreadSelect.value, reader_mode: els.readerModeSelect.value || 'auto', reader_width_px: Math.round(asNumber(els.readerWidthInput.value, 980)), citation_debug_mode: !!els.citationDebugInput.checked };
       const key = els.apiKeyInput.value.trim(); if (key) payload.api_key = key;
       const data = await fetchJson('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       state.settings = data; els.qaModelSelect.value = data.model; applyReaderFontSize(data.reader_font_size); setReaderSpread(data.reader_spread || 'single', false);
       applyReaderWidth(asNumber(data.reader_width_px, 980));
+      if (els.readerModeSelect) els.readerModeSelect.value = data.reader_mode || 'auto';
+      configureReaderMode();
+      if (state.readerReady) scheduleReflow();
       els.citationDebugInput.checked = !!data.citation_debug_mode; renderAnswerHistory(); closeSettings(); els.apiKeyInput.value = '';
     }
 
     function openSettings() {
       if (!state.settings) return;
       els.modelSelect.value = state.settings.model; els.fontSizeInput.value = state.settings.reader_font_size; els.spreadSelect.value = state.settings.reader_spread || 'single';
+      if (els.readerModeSelect) els.readerModeSelect.value = state.settings.reader_mode || 'auto';
       applyReaderWidth(asNumber(state.settings.reader_width_px, 980));
       els.citationDebugInput.checked = !!state.settings.citation_debug_mode; els.apiKeyInput.value = ''; els.settingsModal.classList.add('open'); els.apiKeyInput.focus();
     }
@@ -3127,6 +3349,10 @@
       els.bookmarksCloseBtn.addEventListener('click', closeReaderPanels);
       els.bookmarkToggleBtn.addEventListener('click', toggleCurrentBookmark);
       document.addEventListener('keydown', handleReaderArrowShortcut);
+      els.readerSurface.addEventListener('scroll', () => {
+        if (!state.readerReady || !isScrollMode()) return;
+        scheduleReaderScrollSync();
+      }, { passive: true });
       els.qaFab.addEventListener('click', openQaPanel);
       els.qaCloseBtn.addEventListener('click', closeQaPanel);
       els.qaBackdrop.addEventListener('click', closeQaPanel);
@@ -3178,6 +3404,7 @@
       });
       els.readerSpreadSelect.addEventListener('change', () => setReaderSpread(els.readerSpreadSelect.value, true));
       els.spreadSelect.addEventListener('change', () => setReaderSpread(els.spreadSelect.value, false));
+      if (els.readerModeSelect) els.readerModeSelect.addEventListener('change', () => setReaderMode(els.readerModeSelect.value, false));
       els.readerWidthInput.addEventListener('input', () => applyReaderWidth(els.readerWidthInput.value));
       els.fontMinus.addEventListener('click', () => adjustFont(-6));
       els.fontPlus.addEventListener('click', () => adjustFont(6));
