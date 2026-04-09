@@ -1783,6 +1783,10 @@
       return Math.min(max, Math.max(0, quantizePx(scrollTop)));
     }
 
+    function totalCharsForTextIndex(textNodeIndex) {
+      return textNodeIndex.length ? textNodeIndex[textNodeIndex.length - 1].endChar : 1;
+    }
+
     function containerMetrics(container) {
       const viewport = Math.max(0, quantizePx(container.clientHeight));
       const scrollHeight = Math.max(0, quantizePx(container.scrollHeight));
@@ -1893,16 +1897,6 @@
       return lo;
     }
 
-    function computeTotalPages() {
-      const container = getReaderContainer();
-      if (!container) return 1;
-      return Math.max(1, buildPageBreaks(container).length);
-    }
-
-    function computeCurrentPage() {
-      return _currentPageIndex;
-    }
-
     function getPageSpacer(container, create = false) {
       let spacer = container.querySelector('.bw-page-spacer');
       if (!spacer && create) {
@@ -1914,32 +1908,40 @@
       return spacer;
     }
 
-    function verifyNoClip(container) {
-      // After scrolling, verify no line is clipped at the bottom.
-      // If clipped, pull scrollTop forward just enough to hide the partial line.
-      const contentEl = getContentElement();
-      if (!contentEl) return;
-      const crect = container.getBoundingClientRect();
-      const walker = document.createTreeWalker(contentEl, NodeFilter.SHOW_TEXT);
-      let node, worstPush = 0;
-      while ((node = walker.nextNode())) {
-        if (!(node.textContent || '').trim()) continue;
-        const r = document.createRange();
-        r.selectNodeContents(node);
-        for (const rect of r.getClientRects()) {
-          if (rect.height <= 0) continue;
-          if (rect.bottom <= crect.top || rect.top >= crect.bottom) continue;
-          if (rect.bottom > crect.bottom + 0.5) {
-            // Bottom-clipped line: we need its top to be >= crect.bottom
-            const push = crect.bottom - rect.top + 1;
-            if (push > worstPush) worstPush = push;
-          }
-        }
+    function updateReadingStateFromCharOffset(charOffset, totalChars, options = {}) {
+      const safeTotalChars = Math.max(1, asNumber(totalChars, 1));
+      const chapterPercent = (charOffset / safeTotalChars) * 100;
+      const bookPercent = state.totalChapters > 0 ? ((state.currentChapterIndex + chapterPercent / 100) / state.totalChapters) * 100 : 0;
+      state.currentCharOffset = charOffset;
+      state.currentPage = options.pageIndex != null ? options.pageIndex : 0;
+      state.totalPages = options.totalPages != null ? options.totalPages : 1;
+      state.currentPosition = {
+        ...(state.currentPosition || {}),
+        chapter_index: state.currentChapterIndex,
+        chapter_percent: chapterPercent,
+        book_percent: bookPercent,
+        char_offset: charOffset,
+      };
+      if (options.diag) readerDiag(options.diag, options.diagData || {});
+      updateReaderProgressText();
+      if (options.queue !== false) {
+        queuePositionUpdate({
+          chapter_index: state.currentChapterIndex,
+          chapter_percent: chapterPercent,
+          book_percent: bookPercent,
+          char_offset: charOffset,
+        });
       }
-      if (worstPush > 0) {
-        // Pull back: reduce what we show so the clipped line moves to next page
-        container.scrollTop = clampScrollTop(container, container.scrollTop - worstPush);
-      }
+      if (options.scheduleReturnDismiss !== false) scheduleReturnDismiss();
+    }
+
+    function viewportReadingState(container, contentEl, hintIndex = 0, textNodeIndex = null) {
+      const index = textNodeIndex || buildTextNodeIndex(contentEl);
+      return {
+        textNodeIndex: index,
+        charOffset: computeCharOffsetFromScroll(container, index, hintIndex),
+        totalChars: totalCharsForTextIndex(index),
+      };
     }
 
 
@@ -2008,18 +2010,8 @@
       if (!container || !contentEl) return;
       clearPageClip(container);
       const textNodeIndex = buildTextNodeIndex(contentEl);
-      const hintIndex = hintIndexForCharOffset(textNodeIndex, state.currentCharOffset);
-      const charOffset = computeCharOffsetFromScroll(container, textNodeIndex, hintIndex);
-      state.currentCharOffset = charOffset;
-      state.currentPage = 0;
-      state.totalPages = 1;
-      const totalChars = textNodeIndex.length ? textNodeIndex[textNodeIndex.length - 1].endChar : 1;
-      const chapterPercent = totalChars > 0 ? (charOffset / totalChars) * 100 : 0;
-      const bookPercent = state.totalChapters > 0 ? ((state.currentChapterIndex + chapterPercent / 100) / state.totalChapters) * 100 : 0;
-      state.currentPosition = { ...(state.currentPosition || {}), chapter_index: state.currentChapterIndex, chapter_percent: chapterPercent, book_percent: bookPercent, char_offset: charOffset };
-      updateReaderProgressText();
-      if (options.queue !== false) queuePositionUpdate({ chapter_index: state.currentChapterIndex, chapter_percent: chapterPercent, book_percent: bookPercent, char_offset: charOffset });
-      if (options.scheduleReturnDismiss !== false) scheduleReturnDismiss();
+      const { charOffset, totalChars } = viewportReadingState(container, contentEl, hintIndexForCharOffset(textNodeIndex, state.currentCharOffset), textNodeIndex);
+      updateReadingStateFromCharOffset(charOffset, totalChars, options);
     }
 
     function scheduleReaderScrollSync(delayMs = 80) {
@@ -2062,19 +2054,15 @@
         const foundIndex = textNodeIndex.findIndex(entry => entry.node === startNode);
         if (foundIndex >= 0) hintIndex = Math.max(0, foundIndex - 1);
       }
-      const charOffset = computeCharOffsetFromScroll(container, textNodeIndex, hintIndex);
-      state.currentCharOffset = charOffset;
-      state.currentPage = _currentPageIndex;
-      state.totalPages = breaks.length;
+      const { charOffset, totalChars } = viewportReadingState(container, contentEl, hintIndex, textNodeIndex);
       applyPageClip(container);
-      const totalChars = textNodeIndex.length ? textNodeIndex[textNodeIndex.length - 1].endChar : 1;
-      const chapterPercent = totalChars > 0 ? (charOffset / totalChars) * 100 : 0;
-      const bookPercent = state.totalChapters > 0 ? ((state.currentChapterIndex + chapterPercent / 100) / state.totalChapters) * 100 : 0;
-      state.currentPosition = { ...(state.currentPosition || {}), chapter_index: state.currentChapterIndex, chapter_percent: chapterPercent, book_percent: bookPercent, char_offset: charOffset };
-      readerDiag('page:state', { pageIndex: state.currentPage, targetScrollTop: null, snappedScrollTop: container.scrollTop, metrics: containerMetrics(container) });
-      updateReaderProgressText();
-      if (options.queue !== false) queuePositionUpdate({ chapter_index: state.currentChapterIndex, chapter_percent: chapterPercent, book_percent: bookPercent, char_offset: charOffset });
-      if (options.scheduleReturnDismiss !== false) scheduleReturnDismiss();
+      updateReadingStateFromCharOffset(charOffset, totalChars, {
+        ...options,
+        pageIndex: _currentPageIndex,
+        totalPages: breaks.length,
+        diag: 'page:state',
+        diagData: { pageIndex: _currentPageIndex, targetScrollTop: null, snappedScrollTop: container.scrollTop, metrics: containerMetrics(container) },
+      });
     }
 
     /* ─────────── Chapter Loading ─────────── */
@@ -3070,22 +3058,11 @@
       els.readerStatus.textContent = 'Loading book…'; els.readerStatus.classList.add('visible');
 
       const [bookData, convoData] = await Promise.all([fetchJson(`/api/books/${bookId}`), fetchJson(`/api/books/${bookId}/conversations`)]);
-      state.currentBook = bookData.book; state.chapters = bookData.chapters || []; state.currentPosition = bookData.current_position || null;
-      state.virtualChapters = normalizedVirtualChapterState(bookData.virtual_chapters || null);
-      renderChapterJumpOptions();
-      updateVirtualChapterControls();
-      els.chapterJumpSelect.disabled = true;
-
-      const hydratedHistory = (convoData.conversations || []).map(c => ({ question: c.question, answer: c.answer, sources: c.sources || [], position_context: c.position_context, ask_cfi: c.ask_cfi || null, ask_chapter_index: c.ask_chapter_index != null ? c.ask_chapter_index : null, ask_chapter_percent: c.ask_chapter_percent != null ? c.ask_chapter_percent : null, ask_book_percent: c.ask_book_percent != null ? c.ask_book_percent : null, ask_char_offset: c.ask_char_offset != null ? c.ask_char_offset : null, timestamp: c.created_at }));
-      state.answerHistory = hydratedHistory.slice(-40); state.answerHistoryIndex = state.answerHistory.length - 1;
-      updateAnswerHistoryControls(); renderAnswerHistory(); updateReaderProgressText();
+      const hydratedHistory = hydrateAnswerHistory(convoData.conversations || []);
 
       destroyReader();
-      state.currentBookId = bookId; state.currentBook = bookData.book; state.chapters = bookData.chapters || []; state.currentPosition = bookData.current_position || null;
-      state.virtualChapters = normalizedVirtualChapterState(bookData.virtual_chapters || null);
-      state.answerHistory = hydratedHistory.slice(-40); state.answerHistoryIndex = state.answerHistory.length - 1;
-      renderChapterJumpOptions();
-      updateVirtualChapterControls();
+      applyLoadedBookState(bookId, bookData, hydratedHistory);
+      els.chapterJumpSelect.disabled = true;
 
       els.readerStatus.textContent = 'Downloading EPUB…'; els.readerStatus.classList.add('visible');
       const epubRes = await fetch(`/api/books/${bookId}/book.epub`);
@@ -3218,38 +3195,95 @@
 
     async function fetchJson(url, options) { const res = await fetch(url, options); const data = await res.json(); if (!res.ok) throw new Error(data.detail || 'Request failed'); return data; }
 
-    async function loadSettings() {
-      const data = await fetchJson('/api/settings'); state.settings = data;
+    function hydrateAnswerHistory(conversations) {
+      return (conversations || []).map(c => ({
+        question: c.question,
+        answer: c.answer,
+        sources: c.sources || [],
+        position_context: c.position_context,
+        ask_cfi: c.ask_cfi || null,
+        ask_chapter_index: c.ask_chapter_index != null ? c.ask_chapter_index : null,
+        ask_chapter_percent: c.ask_chapter_percent != null ? c.ask_chapter_percent : null,
+        ask_book_percent: c.ask_book_percent != null ? c.ask_book_percent : null,
+        ask_char_offset: c.ask_char_offset != null ? c.ask_char_offset : null,
+        timestamp: c.created_at,
+      })).slice(-40);
+    }
+
+    function applyLoadedBookState(bookId, bookData, hydratedHistory) {
+      state.currentBookId = bookId;
+      state.currentBook = bookData.book;
+      state.chapters = bookData.chapters || [];
+      state.currentPosition = bookData.current_position || null;
+      state.virtualChapters = normalizedVirtualChapterState(bookData.virtual_chapters || null);
+      state.answerHistory = hydratedHistory;
+      state.answerHistoryIndex = hydratedHistory.length - 1;
+      renderChapterJumpOptions();
+      updateVirtualChapterControls();
+      updateAnswerHistoryControls();
+      renderAnswerHistory();
+      updateReaderProgressText();
+    }
+
+    function syncReaderWidthInput(widthPx) {
+      const w = clamp(asNumber(widthPx, 980), readerWidthBounds().min, readerWidthBounds().max);
+      els.readerWidthInput.value = String(w);
+      els.readerWidthValue.textContent = `${w}px`;
+      return w;
+    }
+
+    function applySettingsData(data, options = {}) {
+      state.settings = data;
       els.currentKey.textContent = data.has_key ? `Current key: ${data.api_key}` : 'No API key configured.';
+      els.modelSelect.value = data.model;
+      els.qaModelSelect.value = data.model;
+      els.fontSizeInput.value = data.reader_font_size;
+      if (els.readerModeSelect) els.readerModeSelect.value = data.reader_mode || 'auto';
+      setReaderSpread(data.reader_spread || 'single', false);
+      applyReaderFontSize(data.reader_font_size);
+      els.readerWidthInput.min = String(asNumber(data.reader_width_px_min, 760));
+      els.readerWidthInput.max = String(asNumber(data.reader_width_px_max, 1320));
+      applyReaderWidth(asNumber(data.reader_width_px, 980));
+      els.citationDebugInput.checked = !!data.citation_debug_mode;
+      configureReaderMode();
+      renderAnswerHistory();
+      if (options.closeSettings) {
+        closeSettings();
+        els.apiKeyInput.value = '';
+      }
+      if (state.readerReady && options.scheduleReflow) scheduleReflow();
+    }
+
+    function populateSettingsForm(settings = state.settings) {
+      if (!settings) return;
+      els.modelSelect.value = settings.model;
+      els.fontSizeInput.value = settings.reader_font_size;
+      els.spreadSelect.value = settings.reader_spread || 'single';
+      if (els.readerModeSelect) els.readerModeSelect.value = settings.reader_mode || 'auto';
+      syncReaderWidthInput(asNumber(settings.reader_width_px, 980));
+      els.citationDebugInput.checked = !!settings.citation_debug_mode;
+      els.apiKeyInput.value = '';
+    }
+
+    async function loadSettings() {
+      const data = await fetchJson('/api/settings');
       els.modelSelect.innerHTML = ''; els.qaModelSelect.innerHTML = '';
       (data.models || []).forEach(model => { for (const sel of [els.modelSelect, els.qaModelSelect]) { const o = document.createElement('option'); o.value = model; o.textContent = model; sel.appendChild(o); } });
-      els.modelSelect.value = data.model; els.qaModelSelect.value = data.model; els.fontSizeInput.value = data.reader_font_size;
-      if (els.readerModeSelect) els.readerModeSelect.value = data.reader_mode || 'auto';
-      setReaderSpread(data.reader_spread || 'single', false); applyReaderFontSize(data.reader_font_size);
-      els.readerWidthInput.min = String(asNumber(data.reader_width_px_min, 760)); els.readerWidthInput.max = String(asNumber(data.reader_width_px_max, 1320));
-      applyReaderWidth(asNumber(data.reader_width_px, 980));
-      configureReaderMode();
-      els.citationDebugInput.checked = !!data.citation_debug_mode; renderAnswerHistory();
+      applySettingsData(data);
     }
 
     async function saveSettings() {
       const payload = { model: els.modelSelect.value, reader_font_size: clamp(parseInt(els.fontSizeInput.value || '100', 10), 70, 160), reader_spread: els.spreadSelect.value, reader_mode: els.readerModeSelect.value || 'auto', reader_width_px: Math.round(asNumber(els.readerWidthInput.value, 980)), citation_debug_mode: !!els.citationDebugInput.checked };
       const key = els.apiKeyInput.value.trim(); if (key) payload.api_key = key;
       const data = await fetchJson('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      state.settings = data; els.qaModelSelect.value = data.model; applyReaderFontSize(data.reader_font_size); setReaderSpread(data.reader_spread || 'single', false);
-      applyReaderWidth(asNumber(data.reader_width_px, 980));
-      if (els.readerModeSelect) els.readerModeSelect.value = data.reader_mode || 'auto';
-      configureReaderMode();
-      if (state.readerReady) scheduleReflow();
-      els.citationDebugInput.checked = !!data.citation_debug_mode; renderAnswerHistory(); closeSettings(); els.apiKeyInput.value = '';
+      applySettingsData(data, { closeSettings: true, scheduleReflow: true });
     }
 
     function openSettings() {
       if (!state.settings) return;
-      els.modelSelect.value = state.settings.model; els.fontSizeInput.value = state.settings.reader_font_size; els.spreadSelect.value = state.settings.reader_spread || 'single';
-      if (els.readerModeSelect) els.readerModeSelect.value = state.settings.reader_mode || 'auto';
-      applyReaderWidth(asNumber(state.settings.reader_width_px, 980));
-      els.citationDebugInput.checked = !!state.settings.citation_debug_mode; els.apiKeyInput.value = ''; els.settingsModal.classList.add('open'); els.apiKeyInput.focus();
+      populateSettingsForm();
+      els.settingsModal.classList.add('open');
+      els.apiKeyInput.focus();
     }
     function closeSettings() { els.settingsModal.classList.remove('open'); }
 

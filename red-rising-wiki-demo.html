@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Red Rising Wiki</title>
+<style>
+:root {
+  --bg-deep: #1a1a1a;
+  --bg-surface: #2a2725;
+  --bg-elevated: #353230;
+  --text-primary: #e8e0d4;
+  --text-secondary: #a89e94;
+  --text-muted: #78706a;
+  --accent: #d4a048;
+  --accent-dim: #a67c32;
+  --border: #3d3835;
+  --link: #d4a048;
+  --link-hover: #e8b860;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Georgia', 'Times New Roman', serif;
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-header {
+  padding: 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sidebar-header h1 {
+  font-size: 1.1rem;
+  color: var(--accent);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.sidebar-header .tag-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.sidebar-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 0;
+}
+
+.nav-section {
+  margin-bottom: 8px;
+}
+
+.nav-header {
+  padding: 6px 20px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.nav-item {
+  display: block;
+  padding: 6px 20px 6px 28px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.9rem;
+  transition: all 0.15s;
+  border-left: 3px solid transparent;
+}
+
+.nav-item:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.nav-item.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--bg-elevated);
+}
+
+/* Main content */
+.main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 40px 60px;
+  max-width: 800px;
+}
+
+.main h1 {
+  font-size: 1.8rem;
+  color: var(--accent);
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.main h2 {
+  font-size: 1.3rem;
+  color: var(--text-primary);
+  margin-top: 32px;
+  margin-bottom: 12px;
+}
+
+.main h3 {
+  font-size: 1.1rem;
+  color: var(--text-secondary);
+  margin-top: 24px;
+  margin-bottom: 8px;
+}
+
+.main p {
+  line-height: 1.7;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.main ul {
+  margin: 8px 0 16px 24px;
+  line-height: 1.7;
+}
+
+.main li {
+  margin-bottom: 6px;
+}
+
+.main hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 24px 0;
+}
+
+.main code {
+  background: var(--bg-elevated);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.85em;
+}
+
+.main pre {
+  background: var(--bg-elevated);
+  padding: 16px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+
+.main pre code {
+  padding: 0;
+  background: none;
+}
+
+.main strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.main em {
+  color: var(--text-secondary);
+}
+
+.wiki-link {
+  color: var(--link);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--accent-dim);
+  transition: all 0.15s;
+}
+
+.wiki-link:hover {
+  color: var(--link-hover);
+  border-bottom-style: solid;
+}
+
+/* Blockquote */
+.main blockquote {
+  border-left: 3px solid var(--accent-dim);
+  padding-left: 16px;
+  margin: 16px 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-deep);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .sidebar { width: 220px; min-width: 220px; }
+  .main { padding: 24px; }
+}
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="sidebar-header">
+    <h1>Red Rising</h1>
+    <div class="tag-label">Spoiler-Safe Wiki — as of ch-01</div>
+  </div>
+  <div class="sidebar-nav">
+    <div class="nav-section"><div class="nav-header">&#x1f4d6; Overview</div><a class="nav-item" href="#" onclick="navigateTo('wiki/index.md')">Red Rising — Wiki Index</a></div>
+<div class="nav-section"><div class="nav-header">&#x1f464; Characters</div><a class="nav-item" href="#" onclick="navigateTo('wiki/characters/darrow.md')">Darrow</a><a class="nav-item" href="#" onclick="navigateTo('wiki/characters/eo.md')">Eo</a><a class="nav-item" href="#" onclick="navigateTo('wiki/characters/kieran.md')">Kieran</a><a class="nav-item" href="#" onclick="navigateTo('wiki/characters/uncle-narol.md')">Uncle Narol</a></div>
+<div class="nav-section"><div class="nav-header">&#x1f4a1; Concepts</div><a class="nav-item" href="#" onclick="navigateTo('wiki/concepts/colors.md')">Colors</a><a class="nav-item" href="#" onclick="navigateTo('wiki/concepts/the-society.md')">The Society</a></div>
+<div class="nav-section"><div class="nav-header">&#x1f30d; Places</div><a class="nav-item" href="#" onclick="navigateTo('wiki/places/lykos.md')">Lykos</a></div>
+<div class="nav-section"><div class="nav-header">&#x2753; Meta</div><a class="nav-item" href="#" onclick="navigateTo('wiki/open-questions.md')">Open Questions</a></div>
+  </div>
+</div>
+
+<div class="main" id="content">
+  <p style="color: var(--text-muted);">Select a page from the sidebar.</p>
+</div>
+
+<script>
+const pages = {"wiki/index.md": {"title": "Red Rising — Wiki Index", "html": "<h1>Red Rising — Wiki Index</h1>\n<p>\n&gt; This wiki reflects the reader&#x27;s knowledge through <strong>Chapter 1: Helldiver</strong>.\n \n&gt; It is spoiler-safe up to this checkpoint.\n</p>\n<h2>Characters</h2>\n<ul>\n<li><a href=\"#\" onclick=\"navigateTo('wiki/characters/darrow.md')\" class=\"wiki-link\">Darrow</a> — Red Helldiver of Lambda clan, the narrator and protagonist</li>\n<li><a href=\"#\" onclick=\"navigateTo('wiki/characters/eo.md')\" class=\"wiki-link\">Eo</a> — Darrow&#x27;s wife, politically aware Red girl known as &quot;Little Eo&quot;</li>\n<li><a href=\"#\" onclick=\"navigateTo('wiki/characters/kieran.md')\" class=\"wiki-link\">Kieran</a> — Darrow&#x27;s cautious older brother</li>\n<li><a href=\"#\" onclick=\"navigateTo('wiki/characters/uncle-narol.md')\" class=\"wiki-link\">Uncle Narol</a> — Darrow&#x27;s uncle, headTalk of the mining crew, a drinker</li>\n</ul>\n<h2>Concepts</h2>\n<ul>\n<li><a href=\"#\" onclick=\"navigateTo('wiki/concepts/the-society.md')\" class=\"wiki-link\">The Society</a> — The governing system that rules through a Color-based caste hierarchy</li>\n<li><a href=\"#\" onclick=\"navigateTo('wiki/concepts/colors.md')\" class=\"wiki-link\">Colors</a> — The caste system dividing humanity (Gold, Gray, Red, Orange known so far)</li>\n</ul>\n<h2>Places</h2>\n<ul>\n<li><a href=\"#\" onclick=\"navigateTo('wiki/places/lykos.md')\" class=\"wiki-link\">Lykos</a> — Underground mining colony on Mars, home to 24 Red clans</li>\n</ul>\n<h2>Factions &amp; Groups</h2>\n<p>\n<em>(Lambda clan and Gamma clan mentioned but not yet detailed enough for separate pages)</em>\n</p>\n<h2>Key Events</h2>\n<p>\n<em>(The Prologue hints at major future events but no significant events have occurred yet beyond Darrow&#x27;s father&#x27;s hanging, referenced in backstory)</em>\n</p>\n<h2><a href=\"#\" onclick=\"navigateTo('wiki/open-questions.md')\" class=\"wiki-link\">Open Questions</a></h2>", "category": "index"}, "wiki/characters/darrow.md": {"title": "Darrow", "html": "<h1>Darrow</h1>\n<h2>Summary</h2>\n<p>\nDarrow is the narrator and protagonist — a sixteen-year-old Red miner and the youngest Helldiver anyone can remember. He works in the underground helium-3 mines of Lykos on Mars, driven by a fierce desire to win the Laurel for his clan and feed his young wife, Eo.\n</p>\n<h2>What We Know So Far</h2>\n<ul>\n<li>Darrow is the Helldiver of Lambda clan, the most dangerous and skilled role on a mining crew (ch. 1). He controls a massive clawDrill from a holster seat, manipulating drill fingers ninety meters below.</li>\n<li>His father was arrested by the Society, tried by the Golds, and hanged by the Grays. The loved ones pull the feet to break the neck. Darrow did not cry at the hanging, which upset his mother (ch. 1).</li>\n<li>He&#x27;s been mining since age 13 (&quot;Old enough to screw, old enough to crew&quot;) and is now 16. He married Eo six months ago (ch. 1).</li>\n<li>He&#x27;s reckless and impatient — he disobeys his Uncle Narol&#x27;s order to wait for a scan crew and climbs down to manually scan a gas pocket near the molten drill fingers (ch. 1).</li>\n<li>He&#x27;s motivated by the Laurel and by feeding Eo, whose ribs he can see through her skin. He suspects she sometimes begs food from Gamma families (ch. 1).</li>\n</ul>\n<h2>Relationships</h2>\n<ul>\n<li><strong><a href=\"#\" onclick=\"navigateTo('wiki/characters/eo.md')\" class=\"wiki-link\">Eo</a></strong>: Wife. Married six months ago. She waited for him to reach wedAge (16) rather than marry at 14 as custom dictates. Darrow is deeply protective of her and driven partly by wanting to feed her properly.</li>\n<li><strong><a href=\"#\" onclick=\"navigateTo('wiki/characters/uncle-narol.md')\" class=\"wiki-link\">Uncle Narol</a></strong>: Darrow&#x27;s uncle and the headTalk (comm leader) for their crew. Darrow sees him as weak, cautious, and a drinker — a &quot;pale shadow&quot; of Darrow&#x27;s father. Narol pulled Darrow&#x27;s father&#x27;s feet at the hanging.</li>\n<li><strong><a href=\"#\" onclick=\"navigateTo('wiki/characters/kieran.md')\" class=\"wiki-link\">Kieran</a></strong>: Darrow&#x27;s older brother by three years. More cautious than Darrow. Was supposed to be the stoic one but cried at their father&#x27;s hanging.</li>\n<li><strong>Loran</strong>: Cousin, Narol&#x27;s son. Supportive of Darrow&#x27;s risk-taking.</li>\n<li><strong>Old Barlow</strong>: Elder driller, makes crude jokes, preaches caution.</li>\n</ul>\n<h2>Open Questions</h2>\n<ul>\n<li>What did Darrow&#x27;s father do that got him arrested and hanged? It seems political — the Society &quot;televised the arrest.&quot;</li>\n<li>The Prologue shows Darrow among Gold students, declaring &quot;I am a Red&quot; and &quot;None of them will survive.&quot; How does he go from underground miner to infiltrating Gold society?</li>\n</ul>\n<h2>Chapter Appearances</h2>\n<ul>\n<li>Prologue: Shown among Gold students, revealing he is secretly a Red.</li>\n<li>Ch. 1: Full introduction as Helldiver of Lambda clan in the mines of Lykos.</li>\n</ul>", "category": "characters"}, "wiki/characters/eo.md": {"title": "Eo", "html": "<h1>Eo</h1>\n<h2>Summary</h2>\n<p>\nEo is Darrow&#x27;s young wife, known since childhood as &quot;Little Eo.&quot; She&#x27;s sixteen, small, with rust-red hair. She has a more critical view of the Society than most Reds, calling them slaves rather than pioneers.\n</p>\n<h2>What We Know So Far</h2>\n<ul>\n<li>Childhood nickname &quot;Little Eo&quot; — described as &quot;a tiny girl hidden beneath a mane of red&quot; (ch. 1).</li>\n<li>From a clan of &quot;Red earth diggers, a clan of song and dance and soil&quot; (ch. 1).</li>\n<li>She waited for Darrow to reach wedAge (16) rather than marrying at 14 as expected. She says she knew they&#x27;d marry since childhood; Darrow didn&#x27;t (ch. 1).</li>\n<li>As a child, she tucked a haemanthus flower into Darrow&#x27;s father&#x27;s boot at his hanging (ch. 1).</li>\n<li>She goes hungry — Darrow can see her ribs through her skin. She lies about not having an appetite. She begs scraps from Gamma families behind Darrow&#x27;s back (ch. 1).</li>\n<li>She calls Reds &quot;slaves&quot; while the official line says they&#x27;re &quot;pioneers.&quot; She sees the Laurel as a carrot the Society dangles just out of reach (ch. 1).</li>\n</ul>\n<h2>Relationships</h2>\n<ul>\n<li><strong><a href=\"#\" onclick=\"navigateTo('wiki/characters/darrow.md')\" class=\"wiki-link\">Darrow</a></strong>: Husband. Married six months ago.</li>\n</ul>\n<h2>Open Questions</h2>\n<ul>\n<li>Her political consciousness seems sharper than Darrow&#x27;s. She calls Reds slaves. Where does this come from?</li>\n<li>Darrow wonders if she would &quot;sell her body to feed him&quot; to the Tinpots/Grays. This question is left hanging.</li>\n</ul>\n<h2>Chapter Appearances</h2>\n<ul>\n<li>Ch. 1: Described through Darrow&#x27;s thoughts while he drills. Present in his memories of the hanging and their courtship.</li>\n</ul>", "category": "characters"}, "wiki/characters/kieran.md": {"title": "Kieran", "html": "<h1>Kieran</h1>\n<h2>Summary</h2>\n<p>\nDarrow&#x27;s older brother by three years. More cautious than Darrow, he sides with Uncle Narol on matters of safety.\n</p>\n<h2>What We Know So Far</h2>\n<ul>\n<li>Three years older than Darrow (ch. 1).</li>\n<li>Was supposed to be the stoic one at their father&#x27;s hanging, but cried instead — while Darrow, the younger, did not (ch. 1).</li>\n<li>Urges Darrow to listen to Uncle Narol and wait for the scan crew (ch. 1).</li>\n</ul>\n<h2>Relationships</h2>\n<ul>\n<li><strong><a href=\"#\" onclick=\"navigateTo('wiki/characters/darrow.md')\" class=\"wiki-link\">Darrow</a></strong>: Younger brother.</li>\n<li><strong>Leanna</strong>: Sister. Murmured a lament at their father&#x27;s hanging.</li>\n</ul>\n<h2>Chapter Appearances</h2>\n<ul>\n<li>Ch. 1: Briefly urges caution over the comm.</li>\n</ul>", "category": "characters"}, "wiki/characters/uncle-narol.md": {"title": "Uncle Narol", "html": "<h1>Uncle Narol</h1>\n<h2>Summary</h2>\n<p>\nDarrow&#x27;s uncle and the headTalk (communications leader) for their mining crew of 200+. Darrow considers him weak, cautious, and too fond of drink — a shadow of Darrow&#x27;s father.\n</p>\n<h2>What We Know So Far</h2>\n<ul>\n<li>HeadTalk for Lambda&#x27;s drilling crew (ch. 1).</li>\n<li>Frequently drunk — Darrow can &quot;practically smell the drink through the comm&quot; (ch. 1).</li>\n<li>Pulled Darrow&#x27;s father&#x27;s feet at the hanging (in low Mars gravity, loved ones must pull to break the neck) (ch. 1).</li>\n<li>Ordered Darrow to stop drilling and wait for a scan crew when a gas pocket was detected. Darrow disobeyed (ch. 1).</li>\n<li>Darrow sees him as afraid — of the Golds, the Grays, of risk in general (ch. 1).</li>\n</ul>\n<h2>Relationships</h2>\n<ul>\n<li><strong><a href=\"#\" onclick=\"navigateTo('wiki/characters/darrow.md')\" class=\"wiki-link\">Darrow</a></strong>: Nephew. Relationship is tense — Darrow respects his authority but doesn&#x27;t trust or admire him.</li>\n<li><strong>Loran</strong>: Son. Loran seems more sympathetic to Darrow&#x27;s risk-taking.</li>\n<li><strong>Darrow&#x27;s father</strong>: Brother. He pulled his brother&#x27;s feet at the hanging.</li>\n</ul>\n<h2>Chapter Appearances</h2>\n<ul>\n<li>Ch. 1: Argues with Darrow over the gas pocket scan.</li>\n</ul>", "category": "characters"}, "wiki/concepts/colors.md": {"title": "Colors", "html": "<h1>Colors</h1>\n<h2>Summary</h2>\n<p>\nHumanity is divided into a caste system based on Colors. Each Color has a designated role in the Society&#x27;s hierarchy.\n</p>\n<h2>Current Understanding</h2>\n<h3>Confirmed</h3>\n<ul>\n<li><strong>Gold</strong> (Aureate): The ruling caste. &quot;The end of the evolutionary line&quot; according to their own ideology (Prologue). Called &quot;Goldbrows&quot; or &quot;Aureate&quot; in technical terms (ch. 1). They judge and sentence dissidents.</li>\n<li><strong>Gray</strong>: Enforcers and garrison troops. Called &quot;Tinpots&quot; colloquially by Reds (ch. 1). They carry thumpers (weapons) and enforce order in the mines.</li>\n<li><strong>Red</strong>: The lowest caste. Miners who extract helium-3 from underground tunnels on Mars. Told they are pioneers; Eo says they are slaves (ch. 1).</li>\n<li><strong>Orange</strong>: Technician group, mentioned briefly in a news broadcast about a terrorist bombing (ch. 1).</li>\n</ul>\n<h3>Implied / Suggested</h3>\n<ul>\n<li>There are likely many more Colors between Gold and Red, but we&#x27;ve only seen these four so far.</li>\n<li>The Prologue&#x27;s Gold speaker frames the hierarchy as evolutionary destiny, not arbitrary assignment.</li>\n</ul>\n<h2>Connections</h2>\n<ul>\n<li>Part of <a href=\"#\" onclick=\"navigateTo('wiki/concepts/the-society.md')\" class=\"wiki-link\">the Society</a>&#x27;s governing structure</li>\n<li><a href=\"#\" onclick=\"navigateTo('wiki/characters/darrow.md')\" class=\"wiki-link\">Darrow</a> is Red, infiltrating Gold in the Prologue</li>\n</ul>\n<h2>Open Questions</h2>\n<ul>\n<li>How many Colors are there total?</li>\n<li>Can people move between Colors, or is it fixed at birth?</li>\n<li>What are the other Colors and their roles?</li>\n</ul>\n<h2>References</h2>\n<ul>\n<li>Prologue: Gold speaker describes Gold as the apex of evolution.</li>\n<li>Ch. 1: Red, Gold, Gray, and Orange mentioned in context.</li>\n</ul>", "category": "concepts"}, "wiki/concepts/the-society.md": {"title": "The Society", "html": "<h1>The Society</h1>\n<h2>Summary</h2>\n<p>\nThe Society is the governing system that rules Mars (and presumably beyond). It organizes humanity into a caste system based on Colors, with Golds at the top. It controls the Red mining colonies and determines their living conditions.\n</p>\n<h2>Current Understanding</h2>\n<h3>Confirmed</h3>\n<ul>\n<li>The Society has a Color-based hierarchy with Golds at the top (Prologue, ch. 1).</li>\n<li>It uses Golds as rulers/overlords, Grays as garrison troops/enforcers (&quot;Tinpots&quot;), and Reds as miners (ch. 1).</li>\n<li>It maintains control through resource allocation — the Laurel system rewards the most productive mining clan with extra food and luxuries (ch. 1).</li>\n<li>It televises arrests and conducts public hangings of dissidents (ch. 1).</li>\n<li>Reds are told they are &quot;pioneers&quot; terraforming Mars. Eo disputes this, calling them slaves (ch. 1).</li>\n</ul>\n<h3>Implied / Suggested</h3>\n<ul>\n<li>The Prologue&#x27;s Gold speaker references &quot;Demokracy&quot; as a &quot;Noble Lie&quot; and &quot;cancer&quot; — suggesting the Society explicitly rejects democratic ideals in favor of an evolutionary hierarchy.</li>\n<li>The Sons of Ares are mentioned on broadcasts as terrorists — suggesting organized resistance exists.</li>\n</ul>\n<h2>Connections</h2>\n<ul>\n<li>Controls the <a href=\"#\" onclick=\"navigateTo('wiki/concepts/colors.md')\" class=\"wiki-link\">Colors</a> caste system</li>\n<li>Governs the mining colony of <a href=\"#\" onclick=\"navigateTo('wiki/places/lykos.md')\" class=\"wiki-link\">Lykos</a></li>\n</ul>\n<h2>Open Questions</h2>\n<ul>\n<li>What is the full scope of the Society? Does it rule all of humanity or just Mars?</li>\n<li>What are the Sons of Ares and how significant is their resistance?</li>\n<li>What is the actual purpose of the Red mining colonies? Are they truly terraforming?</li>\n</ul>\n<h2>References</h2>\n<ul>\n<li>Prologue: Gold speaker describes the Society&#x27;s ideology.</li>\n<li>Ch. 1: Seen from the Red perspective — resource control, garrison troops, public executions.</li>\n</ul>", "category": "concepts"}, "wiki/places/lykos.md": {"title": "Lykos", "html": "<h1>Lykos</h1>\n<h2>Summary</h2>\n<p>\nAn underground mining colony on Mars where Darrow and the Reds live and work. It consists of twenty-four clans who mine helium-3 in deep tunnels.\n</p>\n<h2>Description</h2>\n<p>\nLykos is entirely underground. The miners live in townships connected by tunnelroads and gather at a central Common. The mining tunnels are deep, hot, and dangerous — filled with molten rock, toxic gas pockets, and pitvipers. The Reds have never seen the stars from inside the colony (ch. 1).\n</p>\n<h2>Significance</h2>\n<p>\nThis is the starting setting of the story — Darrow&#x27;s entire world. The twenty-four clans compete for the Laurel each quarter, which determines their food and resource allocation.\n</p>\n<h2>Notable Inhabitants / Visitors</h2>\n<ul>\n<li><a href=\"#\" onclick=\"navigateTo('wiki/characters/darrow.md')\" class=\"wiki-link\">Darrow</a> — Helldiver of Lambda clan</li>\n<li><a href=\"#\" onclick=\"navigateTo('wiki/characters/eo.md')\" class=\"wiki-link\">Eo</a> — Darrow&#x27;s wife</li>\n<li><a href=\"#\" onclick=\"navigateTo('wiki/characters/uncle-narol.md')\" class=\"wiki-link\">Uncle Narol</a> — headTalk of Darrow&#x27;s crew</li>\n<li>Lambda clan, Gamma clan (dominant Laurel winners)</li>\n</ul>\n<h2>References</h2>\n<ul>\n<li>Ch. 1: Primary setting. Mining operations, clan structure, and daily life described.</li>\n</ul>", "category": "places"}, "wiki/open-questions.md": {"title": "Open Questions", "html": "<h1>Open Questions</h1>\n<p>\nQuestions and mysteries as of <strong>Chapter 1: Helldiver</strong>.\n</p>\n<h2>Active Questions</h2>\n<ul>\n<li><strong>What did Darrow&#x27;s father do to get hanged?</strong> — Raised ch. 1. The Society televised the arrest and the Golds tried him. Seems political.</li>\n<li><strong>How does Darrow end up among Golds?</strong> — Raised in Prologue. He&#x27;s shown among Gold students declaring &quot;I am a Red&quot; and &quot;None of them will survive.&quot; The gap between underground miner and Gold infiltrator is enormous.</li>\n<li><strong>Who are the Sons of Ares?</strong> — Mentioned ch. 1 via news broadcast. Blamed for a terrorist bombing that killed Reds and Oranges. Their glyph is a &quot;cruel helm.&quot;</li>\n<li><strong>What are the Reds really doing?</strong> — Raised ch. 1. They&#x27;re told they&#x27;re pioneers terraforming Mars. Eo calls them slaves. Is the official story true?</li>\n<li><strong>Are there more Colors?</strong> — Raised ch. 1. We&#x27;ve seen Gold, Gray, Red, and Orange. The word &quot;Colors&quot; (plural) suggests many more.</li>\n<li><strong>Will Darrow survive the gas pocket?</strong> — Raised ch. 1. He disobeyed orders and climbed down to the molten drills. His suit is bubbling and he smells &quot;burned syrup&quot; — the smell of death to a Helldiver.</li>\n</ul>\n<h2>Recently Resolved</h2>\n<p>\n<em>(None yet — we&#x27;re just getting started)</em>\n</p>", "category": "meta"}};
+
+function navigateTo(pageId) {
+  const page = pages[pageId];
+  if (!page) {
+    document.getElementById('content').innerHTML =
+      '<p style="color: var(--text-muted);">Page not found: ' + pageId + '</p>';
+    return;
+  }
+
+  document.getElementById('content').innerHTML = page.html;
+
+  // Update active state in sidebar
+  document.querySelectorAll('.nav-item').forEach(el => {
+    el.classList.remove('active');
+    if (el.getAttribute('onclick')?.includes(pageId)) {
+      el.classList.add('active');
+    }
+  });
+
+  // Scroll to top
+  document.getElementById('content').scrollTop = 0;
+
+  return false;
+}
+
+// Load default page
+navigateTo('wiki/index.md');
+</script>
+
+</body>
+</html>

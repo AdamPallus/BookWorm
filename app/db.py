@@ -92,6 +92,16 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS virtual_chapter_settings (
+  book_id INTEGER PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  pattern TEXT,
+  entries_json TEXT,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  detection_mode TEXT NOT NULL DEFAULT 'strict',
+  toc_display_mode TEXT NOT NULL DEFAULT 'merged'
+);
 """
 
 VEC_SCHEMA = """
@@ -207,6 +217,26 @@ def _migrate(conn: sqlite3.Connection):
   _ensure_column(conn, "conversations", "ask_chapter_percent", "REAL")
   _ensure_column(conn, "conversations", "ask_book_percent", "REAL")
   _ensure_column(conn, "conversations", "ask_char_offset", "INTEGER")
+
+  conn.execute(
+    """
+    CREATE TABLE IF NOT EXISTS virtual_chapter_settings (
+      book_id INTEGER PRIMARY KEY,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      pattern TEXT,
+      entries_json TEXT,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      detection_mode TEXT NOT NULL DEFAULT 'strict',
+      toc_display_mode TEXT NOT NULL DEFAULT 'merged'
+    )
+    """
+  )
+  _ensure_column(conn, "virtual_chapter_settings", "enabled", "INTEGER NOT NULL DEFAULT 0")
+  _ensure_column(conn, "virtual_chapter_settings", "pattern", "TEXT")
+  _ensure_column(conn, "virtual_chapter_settings", "entries_json", "TEXT")
+  _ensure_column(conn, "virtual_chapter_settings", "updated_at", "TEXT")
+  _ensure_column(conn, "virtual_chapter_settings", "detection_mode", "TEXT NOT NULL DEFAULT 'strict'")
+  _ensure_column(conn, "virtual_chapter_settings", "toc_display_mode", "TEXT NOT NULL DEFAULT 'merged'")
 
   # Ensure bookmark storage exists for per-book saved reading points.
   conn.execute(

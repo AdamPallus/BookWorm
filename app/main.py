@@ -2,7 +2,7 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -44,6 +44,10 @@ DEFAULT_READER_BOTTOM_PADDING_PX = 34
 MIN_READER_BOTTOM_PADDING_PX = 12
 MAX_READER_BOTTOM_PADDING_PX = 120
 DEFAULT_CITATION_DEBUG_MODE = False
+ALLOWED_VIRTUAL_CHAPTER_DETECTION_MODES = ["strict", "plain"]
+DEFAULT_VIRTUAL_CHAPTER_DETECTION_MODE = "strict"
+ALLOWED_TOC_DISPLAY_MODES = ["merged", "separate"]
+DEFAULT_TOC_DISPLAY_MODE = "merged"
 CANONICAL_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -76,6 +80,18 @@ class SettingsUpdate(BaseModel):
   reader_width_px: Optional[int] = None
   reader_bottom_padding_px: Optional[int] = None
   citation_debug_mode: Optional[bool] = None
+
+
+class VirtualChapterDetectRequest(BaseModel):
+  pattern: str
+  enable: Optional[bool] = True
+  detection_mode: Optional[str] = None
+
+
+class VirtualChapterSettingsUpdate(BaseModel):
+  enabled: Optional[bool] = None
+  detection_mode: Optional[str] = None
+  toc_display_mode: Optional[str] = None
 
 
 class ChunkCfiUpdate(BaseModel):
@@ -159,6 +175,28 @@ def _current_reader_bottom_padding_px(conn) -> int:
 def _current_citation_debug_mode(conn) -> bool:
   raw = str(get_setting(conn, "citation_debug_mode", "1" if DEFAULT_CITATION_DEBUG_MODE else "0")).strip().lower()
   return raw in {"1", "true", "yes", "on"}
+
+
+def _settings_payload(conn) -> dict:
+  key = get_api_key()
+  return {
+    "api_key": key,
+    "has_key": key is not None,
+    "model": _current_model(conn),
+    "models": ALLOWED_MODELS,
+    "reader_font_size": _current_font_size(conn),
+    "reader_spread": _current_reader_spread(conn),
+    "reader_spread_options": ALLOWED_READER_SPREADS,
+    "reader_mode": _current_reader_mode(conn),
+    "reader_mode_options": ALLOWED_READER_MODES,
+    "reader_width_px": _current_reader_width_px(conn),
+    "reader_width_px_min": MIN_READER_WIDTH_PX,
+    "reader_width_px_max": MAX_READER_WIDTH_PX,
+    "reader_bottom_padding_px": _current_reader_bottom_padding_px(conn),
+    "reader_bottom_padding_px_min": MIN_READER_BOTTOM_PADDING_PX,
+    "reader_bottom_padding_px_max": MAX_READER_BOTTOM_PADDING_PX,
+    "citation_debug_mode": _current_citation_debug_mode(conn),
+  }
 
 
 def _book_row_or_404(conn, book_id: int):
@@ -276,6 +314,178 @@ def _chapter_anchor_from_percent(
   return offset, anchor_text
 
 
+def _normalize_virtual_chapter_detection_mode(value: Optional[str]) -> str:
+  raw = str(value or DEFAULT_VIRTUAL_CHAPTER_DETECTION_MODE).strip().lower()
+  if raw not in ALLOWED_VIRTUAL_CHAPTER_DETECTION_MODES:
+    raise HTTPException(status_code=400, detail=f"Unsupported detection_mode '{value}'")
+  return raw
+
+
+def _normalize_toc_display_mode(value: Optional[str]) -> str:
+  raw = str(value or DEFAULT_TOC_DISPLAY_MODE).strip().lower()
+  if raw not in ALLOWED_TOC_DISPLAY_MODES:
+    raise HTTPException(status_code=400, detail=f"Unsupported toc_display_mode '{value}'")
+  return raw
+
+
+def _virtual_chapter_state(conn, book_id: int) -> dict:
+  row = conn.execute(
+    """
+    SELECT enabled, pattern, entries_json, detection_mode, toc_display_mode
+    FROM virtual_chapter_settings
+    WHERE book_id = ?
+    """,
+    (book_id,),
+  ).fetchone()
+  if not row:
+    return {
+      "enabled": False,
+      "pattern": None,
+      "entries": [],
+      "detection_mode": DEFAULT_VIRTUAL_CHAPTER_DETECTION_MODE,
+      "toc_display_mode": DEFAULT_TOC_DISPLAY_MODE,
+    }
+  try:
+    entries = json.loads(row["entries_json"]) if row["entries_json"] else []
+  except Exception:
+    entries = []
+  return {
+    "enabled": bool(row["enabled"]),
+    "pattern": row["pattern"],
+    "entries": entries if isinstance(entries, list) else [],
+    "detection_mode": _normalize_virtual_chapter_detection_mode(row["detection_mode"]),
+    "toc_display_mode": _normalize_toc_display_mode(row["toc_display_mode"]),
+  }
+
+
+def _save_virtual_chapter_state(conn, book_id: int, state: dict) -> dict:
+  payload = {
+    "enabled": bool(state.get("enabled")),
+    "pattern": (state.get("pattern") or None),
+    "entries": state.get("entries") if isinstance(state.get("entries"), list) else [],
+    "detection_mode": _normalize_virtual_chapter_detection_mode(state.get("detection_mode")),
+    "toc_display_mode": _normalize_toc_display_mode(state.get("toc_display_mode")),
+  }
+  conn.execute(
+    """
+    INSERT INTO virtual_chapter_settings
+      (book_id, enabled, pattern, entries_json, detection_mode, toc_display_mode, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(book_id) DO UPDATE SET
+      enabled = excluded.enabled,
+      pattern = excluded.pattern,
+      entries_json = excluded.entries_json,
+      detection_mode = excluded.detection_mode,
+      toc_display_mode = excluded.toc_display_mode,
+      updated_at = CURRENT_TIMESTAMP
+    """,
+    (
+      book_id,
+      1 if payload["enabled"] else 0,
+      payload["pattern"],
+      json.dumps(payload["entries"], ensure_ascii=False),
+      payload["detection_mode"],
+      payload["toc_display_mode"],
+    ),
+  )
+  conn.commit()
+  return payload
+
+
+def _compact_whitespace(text: str) -> str:
+  return re.sub(r"\s+", " ", (text or "")).strip()
+
+
+def _chapter_text_map(conn, book_id: int) -> List[dict]:
+  chapter_rows = conn.execute(
+    "SELECT chapter_index, title FROM chapters WHERE book_id = ? ORDER BY chapter_index",
+    (book_id,),
+  ).fetchall()
+  chunk_rows = conn.execute(
+    """
+    SELECT chapter_index, text
+    FROM chunks
+    WHERE book_id = ?
+    ORDER BY chapter_index, position_index, id
+    """,
+    (book_id,),
+  ).fetchall()
+  chapter_texts = {}
+  for row in chunk_rows:
+    chapter_texts.setdefault(int(row["chapter_index"]), []).append(row["text"] or "")
+  return [
+    {
+      "chapter_index": int(ch["chapter_index"]),
+      "title": ch["title"],
+      "text": "\n\n".join(chapter_texts.get(int(ch["chapter_index"]), [])),
+    }
+    for ch in chapter_rows
+  ]
+
+
+def _iter_virtual_chapter_matches(text: str, pattern: str, detection_mode: str):
+  source = text or ""
+  marker = (pattern or "").strip()
+  if not source or not marker:
+    return
+
+  if detection_mode == "plain":
+    regex = re.compile(re.escape(marker), re.IGNORECASE)
+    last_end = -10**9
+    for match in regex.finditer(source):
+      if match.start() - last_end < 120:
+        continue
+      line_start = source.rfind("\n", 0, match.start()) + 1
+      line_end = source.find("\n", match.start())
+      if line_end < 0:
+        line_end = len(source)
+      label = _compact_whitespace(source[line_start:line_end])[:80]
+      snippet = _compact_whitespace(source[max(0, match.start() - 100): min(len(source), match.end() + 180)])[:240]
+      if not label:
+        label = _compact_whitespace(source[match.start(): min(len(source), match.start() + 80)])[:80]
+      if not label:
+        continue
+      last_end = match.end()
+      yield {"char_offset": match.start(), "label": label, "snippet": snippet}
+    return
+
+  base_marker = marker.replace("<number>", "").strip() or marker
+  require_suffix = "<number>" in marker
+  header_re = re.compile(
+    rf"(?im)^[ \t]*({re.escape(base_marker)}(?:[ \t]+[A-Za-z0-9][A-Za-z0-9'’.:-]*){{{1 if require_suffix else 0},6}})[ \t]*$"
+  )
+  for match in header_re.finditer(source):
+    label = _compact_whitespace(match.group(1))[:80]
+    if not label:
+      continue
+    if len(label.split()) > 8:
+      continue
+    snippet = _compact_whitespace(source[max(0, match.start() - 100): min(len(source), match.end() + 180)])[:240]
+    yield {"char_offset": match.start(1), "label": label, "snippet": snippet}
+
+
+def _detect_virtual_chapter_entries(conn, book_id: int, pattern: str, detection_mode: str) -> List[dict]:
+  entries = []
+  for chapter in _chapter_text_map(conn, book_id):
+    seen_offsets = set()
+    for match in _iter_virtual_chapter_matches(chapter["text"], pattern, detection_mode):
+      char_offset = max(0, int(match["char_offset"]))
+      if char_offset in seen_offsets:
+        continue
+      seen_offsets.add(char_offset)
+      entries.append(
+        {
+          "id": f"v-{chapter['chapter_index']}-{char_offset}",
+          "chapter_index": chapter["chapter_index"],
+          "char_offset": char_offset,
+          "label": match["label"],
+          "snippet": match["snippet"],
+          "virtual": True,
+        }
+      )
+  return entries
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
   return (STATIC_DIR / "index.html").read_text()
@@ -321,27 +531,10 @@ def chrome_devtools_probe():
 @app.get("/api/settings")
 def get_settings():
   conn = connect()
-  key = get_api_key()
-  data = {
-    "api_key": key,
-    "has_key": key is not None,
-    "model": _current_model(conn),
-    "models": ALLOWED_MODELS,
-    "reader_font_size": _current_font_size(conn),
-    "reader_spread": _current_reader_spread(conn),
-    "reader_spread_options": ALLOWED_READER_SPREADS,
-    "reader_mode": _current_reader_mode(conn),
-    "reader_mode_options": ALLOWED_READER_MODES,
-    "reader_width_px": _current_reader_width_px(conn),
-    "reader_width_px_min": MIN_READER_WIDTH_PX,
-    "reader_width_px_max": MAX_READER_WIDTH_PX,
-    "reader_bottom_padding_px": _current_reader_bottom_padding_px(conn),
-    "reader_bottom_padding_px_min": MIN_READER_BOTTOM_PADDING_PX,
-    "reader_bottom_padding_px_max": MAX_READER_BOTTOM_PADDING_PX,
-    "citation_debug_mode": _current_citation_debug_mode(conn),
-  }
-  conn.close()
-  return data
+  try:
+    return _settings_payload(conn)
+  finally:
+    conn.close()
 
 
 @app.post("/api/settings")
@@ -387,25 +580,7 @@ def save_settings(payload: SettingsUpdate):
       set_setting(conn, "citation_debug_mode", "1" if payload.citation_debug_mode else "0")
 
     conn.commit()
-    key = get_api_key()
-    return {
-      "api_key": key,
-      "has_key": key is not None,
-      "model": _current_model(conn),
-      "models": ALLOWED_MODELS,
-      "reader_font_size": _current_font_size(conn),
-      "reader_spread": _current_reader_spread(conn),
-      "reader_spread_options": ALLOWED_READER_SPREADS,
-      "reader_mode": _current_reader_mode(conn),
-      "reader_mode_options": ALLOWED_READER_MODES,
-      "reader_width_px": _current_reader_width_px(conn),
-      "reader_width_px_min": MIN_READER_WIDTH_PX,
-      "reader_width_px_max": MAX_READER_WIDTH_PX,
-      "reader_bottom_padding_px": _current_reader_bottom_padding_px(conn),
-      "reader_bottom_padding_px_min": MIN_READER_BOTTOM_PADDING_PX,
-      "reader_bottom_padding_px_max": MAX_READER_BOTTOM_PADDING_PX,
-      "citation_debug_mode": _current_citation_debug_mode(conn),
-    }
+    return _settings_payload(conn)
   finally:
     conn.close()
 
@@ -452,6 +627,7 @@ def get_book(book_id: int):
       "book": dict(book),
       "chapters": [dict(r) for r in chapters],
       "current_position": dict(pos) if pos else None,
+      "virtual_chapters": _virtual_chapter_state(conn, book_id),
     }
   finally:
     conn.close()
@@ -467,6 +643,57 @@ def get_chapters(book_id: int):
       (book_id,),
     ).fetchall()
     return {"chapters": [dict(r) for r in rows]}
+  finally:
+    conn.close()
+
+
+@app.post("/api/books/{book_id}/virtual-chapters/detect")
+def detect_virtual_chapters(book_id: int, payload: VirtualChapterDetectRequest):
+  conn = connect()
+  try:
+    _book_row_or_404(conn, book_id)
+    pattern = _compact_whitespace(payload.pattern)
+    if len(pattern) < 2:
+      raise HTTPException(status_code=400, detail="Pattern must be at least 2 characters")
+    detection_mode = _normalize_virtual_chapter_detection_mode(payload.detection_mode)
+    current = _virtual_chapter_state(conn, book_id)
+    next_state = {
+      **current,
+      "enabled": bool(payload.enable if payload.enable is not None else True),
+      "pattern": pattern,
+      "entries": _detect_virtual_chapter_entries(conn, book_id, pattern, detection_mode),
+      "detection_mode": detection_mode,
+    }
+    return _save_virtual_chapter_state(conn, book_id, next_state)
+  finally:
+    conn.close()
+
+
+@app.post("/api/books/{book_id}/virtual-chapters/settings")
+def update_virtual_chapter_settings(book_id: int, payload: VirtualChapterSettingsUpdate):
+  conn = connect()
+  try:
+    _book_row_or_404(conn, book_id)
+    current = _virtual_chapter_state(conn, book_id)
+    next_state = {
+      **current,
+      "enabled": current["enabled"] if payload.enabled is None else bool(payload.enabled),
+      "detection_mode": current["detection_mode"] if payload.detection_mode is None else _normalize_virtual_chapter_detection_mode(payload.detection_mode),
+      "toc_display_mode": current["toc_display_mode"] if payload.toc_display_mode is None else _normalize_toc_display_mode(payload.toc_display_mode),
+    }
+    return _save_virtual_chapter_state(conn, book_id, next_state)
+  finally:
+    conn.close()
+
+
+@app.delete("/api/books/{book_id}/virtual-chapters")
+def delete_virtual_chapters(book_id: int):
+  conn = connect()
+  try:
+    _book_row_or_404(conn, book_id)
+    conn.execute("DELETE FROM virtual_chapter_settings WHERE book_id = ?", (book_id,))
+    conn.commit()
+    return {"ok": True}
   finally:
     conn.close()
 
@@ -1154,6 +1381,7 @@ def delete_book(book_id: int):
     conn.execute("DELETE FROM conversations WHERE book_id = ?", (book_id,))
     conn.execute("DELETE FROM bookmarks WHERE book_id = ?", (book_id,))
     conn.execute("DELETE FROM book_positions WHERE book_id = ?", (book_id,))
+    conn.execute("DELETE FROM virtual_chapter_settings WHERE book_id = ?", (book_id,))
     conn.execute("DELETE FROM chapters WHERE book_id = ?", (book_id,))
     conn.execute("DELETE FROM chunks WHERE book_id = ?", (book_id,))
 
