@@ -156,6 +156,36 @@ def categorize_path(path: str) -> str:
     return "other"
 
 
+def snapshot_story_label(pages: dict) -> str | None:
+    index_page = pages.get("wiki/index.md", {})
+    content = index_page.get("content", "")
+    match = re.search(r"knowledge through \*\*(.*?)\*\*", content, re.IGNORECASE)
+    if not match:
+        return None
+    return re.sub(r"\s+", " ", match.group(1)).strip()
+
+
+def snapshot_story_order(label: str | None) -> int | None:
+    if not label:
+        return None
+    lower = label.lower()
+    if "prologue" in lower:
+        return 0
+    match = re.search(r"chapter\s+(\d+)", label, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def tag_story_order(tag: str) -> int | None:
+    match = re.match(r"(?:(?:b|book)(\d+)-)?ch-(\d+)$", tag, re.IGNORECASE)
+    if not match:
+        return None
+    book_num = int(match.group(1) or 0)
+    chapter_num = int(match.group(2))
+    return (book_num * 1000 + chapter_num) if book_num else chapter_num
+
+
 def export_snapshots(repo_dir: str, output_path: str) -> None:
     """Export wiki snapshots for all chapter tags."""
     repo_dir = os.path.abspath(repo_dir)
@@ -206,11 +236,15 @@ def export_snapshots(repo_dir: str, output_path: str) -> None:
             if category in stats:
                 stats[category] += 1
 
+        story_label = snapshot_story_label(pages)
+        tag_order = tag_story_order(tag)
         snapshots[tag] = {
             "tag": tag,
             "commit": commit,
             "timestamp": timestamp,
             "pages": pages,
+            "story_label": story_label,
+            "story_order": tag_order if tag_order is not None else snapshot_story_order(story_label),
             "stats": stats,
         }
 

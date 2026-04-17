@@ -8,13 +8,25 @@ _client = None
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 
 SYSTEM_PROMPT = """
-You are a spoiler-free book companion. Answer ONLY using the provided excerpts.
+You are a spoiler-free book companion.
+Use ONLY the provided wiki context and raw excerpts.
 Do NOT use any knowledge about this book from your training data.
-If the excerpts don't contain the answer, say you don't have enough information.
-Cite your sources using [c:CHUNK_ID] markers (example: [c:42]).
-Never use numbered citations like [1], (1), or 【1】.
-If you cite multiple chunks together, use one marker with comma-separated IDs, e.g. [c:42,57].
-Keep answers concise and conversational.
+
+The wiki context is spoiler-safe background through the last completed chapter before the reader's current location.
+The raw excerpts are the authoritative source text up to the reader's exact current position.
+
+Rules:
+- Prefer the raw excerpts whenever answering about the current chapter, a precise event, or anything that needs proof.
+- Use the wiki context to ground background, identity, terminology, and prior understanding.
+- If the wiki context and raw excerpts seem to disagree, trust the raw excerpts.
+- If the provided context is insufficient, say you don't have enough information.
+- Cite raw excerpts using [c:CHUNK_ID] markers (example: [c:42]).
+- Cite wiki sections using [w:SECTION_ID] markers (example: [w:17]).
+- If a point is supported by both, you may cite both.
+- Never use numbered citations like [1], (1), or 【1】.
+- If you cite multiple raw chunks together, use one marker with comma-separated IDs, e.g. [c:42,57].
+- If you rely mainly on the wiki, say so plainly instead of pretending it came from raw text.
+- Keep answers concise and conversational.
 """.strip()
 
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -126,24 +138,37 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
   return embeddings
 
 
-def _build_messages(question: str, excerpts: List[Dict]) -> List[Dict[str, str]]:
-  context_lines = []
+def _build_messages(question: str, excerpts: List[Dict], wiki_context: Optional[str] = None) -> List[Dict[str, str]]:
+  raw_context_lines = []
   for ex in excerpts:
-    context_lines.append(
+    raw_context_lines.append(
       f"[c:{ex['id']}] [Chapter {ex['chapter_index'] + 1} | Pos {ex['position_index']}]\n{ex['text']}"
     )
-  context = "\n\n".join(context_lines)
+  raw_context = "\n\n".join(raw_context_lines).strip() or "(none)"
+  wiki_context = (wiki_context or "").strip() or "(none)"
 
   return [
     {"role": "system", "content": SYSTEM_PROMPT},
-    {"role": "user", "content": f"Question: {question}\n\nExcerpts:\n{context}"},
+    {
+      "role": "user",
+      "content": (
+        f"Question: {question}\n\n"
+        f"Wiki Context:\n{wiki_context}\n\n"
+        f"Raw Excerpts:\n{raw_context}"
+      ),
+    },
   ]
 
 
-def stream_answer(question: str, excerpts: List[Dict], model: str) -> Generator[str, None, None]:
+def stream_answer(
+  question: str,
+  excerpts: List[Dict],
+  model: str,
+  wiki_context: Optional[str] = None,
+) -> Generator[str, None, None]:
   stream = _get_client().chat.completions.create(
     model=model,
-    messages=_build_messages(question, excerpts),
+    messages=_build_messages(question, excerpts, wiki_context=wiki_context),
     stream=True,
   )
 

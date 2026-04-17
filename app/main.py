@@ -6,12 +6,13 @@ from typing import Any, List, Optional, Tuple
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from .db import COVER_DIR, EPUB_DIR, connect, get_setting, set_setting
 from .ingest import chunk_chapter, extract_book
 from .rag import embed_texts, get_api_key, set_api_key, stream_answer
+from .wiki import ensure_wiki_artifacts, ensure_wiki_ingested, get_book_wiki_state, load_query_wiki_context, resolve_default_wiki_view
 
 try:
   import sqlite_vec
@@ -219,12 +220,13 @@ def _save_conversation(
   ask_chapter_percent: Optional[float] = None,
   ask_book_percent: Optional[float] = None,
   ask_char_offset: Optional[int] = None,
+  retrieval_context: Optional[dict] = None,
 ):
   conn.execute(
     """
     INSERT INTO conversations
-      (book_id, question, answer, model, position_context, ask_cfi, ask_chapter_index, ask_chapter_percent, ask_book_percent, ask_char_offset, sources_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (book_id, question, answer, model, position_context, ask_cfi, ask_chapter_index, ask_chapter_percent, ask_book_percent, ask_char_offset, sources_json, retrieval_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """,
     (
       book_id,
@@ -238,6 +240,7 @@ def _save_conversation(
       ask_book_percent,
       ask_char_offset,
       json.dumps(sources, ensure_ascii=False),
+      json.dumps(retrieval_context, ensure_ascii=False) if retrieval_context is not None else None,
     ),
   )
   conn.commit()
@@ -423,6 +426,169 @@ def _chapter_text_map(conn, book_id: int) -> List[dict]:
   ]
 
 
+def _position_chapter_index(
+  conn,
+  book_id: int,
+  position_index: int,
+  fallback: Optional[int] = None,
+) -> Optional[int]:
+  if fallback is not None:
+    return int(fallback)
+  row = conn.execute(
+    """
+    SELECT chapter_index
+    FROM chunks
+    WHERE book_id = ? AND position_index <= ?
+    ORDER BY position_index DESC, id DESC
+    LIMIT 1
+    """,
+    (book_id, position_index),
+  ).fetchone()
+  if not row:
+    return None
+  return int(row["chapter_index"])
+
+
+def _fetch_chunks_by_ids(conn, chunk_ids: List[int]) -> List[dict]:
+  if not chunk_ids:
+    return []
+  placeholders = ",".join(["?"] * len(chunk_ids))
+  rows = conn.execute(
+    f"SELECT * FROM chunks WHERE id IN ({placeholders})",
+    chunk_ids,
+  ).fetchall()
+  by_id = {row["id"]: dict(row) for row in rows}
+  return [by_id[chunk_id] for chunk_id in chunk_ids if chunk_id in by_id]
+
+
+def _current_chapter_excerpt_rows(
+  conn,
+  book_id: int,
+  chapter_index: Optional[int],
+  position_index: int,
+  limit: int = 4,
+) -> List[dict]:
+  if chapter_index is None:
+    return []
+  rows = conn.execute(
+    """
+    SELECT *
+    FROM chunks
+    WHERE book_id = ? AND chapter_index = ? AND position_index <= ?
+    ORDER BY position_index DESC, id DESC
+    LIMIT ?
+    """,
+    (book_id, chapter_index, position_index, int(limit)),
+  ).fetchall()
+  ordered = [dict(row) for row in rows]
+  ordered.reverse()
+  return ordered
+
+
+def _keyword_excerpt_rows(
+  conn,
+  book_id: int,
+  position_index: int,
+  search_terms: List[str],
+  current_chapter_index: Optional[int],
+  limit: int = 6,
+) -> List[dict]:
+  if not search_terms:
+    return []
+
+  scored = {}
+  seen_terms = set()
+  for raw_term in search_terms[:10]:
+    term = re.sub(r"\s+", " ", (raw_term or "")).strip().lower()
+    if len(term) < 4 or term in seen_terms:
+      continue
+    seen_terms.add(term)
+
+    rows = conn.execute(
+      """
+      SELECT *
+      FROM chunks
+      WHERE book_id = ? AND position_index <= ? AND LOWER(text) LIKE ?
+      ORDER BY position_index DESC, id DESC
+      LIMIT 6
+      """,
+      (book_id, position_index, f"%{term}%"),
+    ).fetchall()
+
+    for row in rows:
+      chunk = dict(row)
+      text = (chunk.get("text") or "").lower()
+      hits = text.count(term)
+      if hits <= 0:
+        continue
+      entry = scored.setdefault(
+        chunk["id"],
+        {
+          "chunk": chunk,
+          "score": 0.0,
+        },
+      )
+      entry["score"] += hits * 7
+      if current_chapter_index is not None and chunk["chapter_index"] == current_chapter_index:
+        entry["score"] += 4
+      entry["score"] += max(0.0, 2.0 - ((position_index - chunk["position_index"]) / 24.0))
+
+  ranked = sorted(
+    scored.values(),
+    key=lambda entry: (entry["score"], entry["chunk"]["position_index"]),
+    reverse=True,
+  )
+  return [entry["chunk"] for entry in ranked[:limit]]
+
+
+def _merge_excerpt_rows(
+  vector_rows: List[dict],
+  local_rows: List[dict],
+  keyword_rows: List[dict],
+  position_index: int,
+  current_chapter_index: Optional[int],
+  limit: int = 12,
+) -> List[dict]:
+  merged = []
+  seen = set()
+
+  for row in local_rows:
+    chunk_id = row["id"]
+    if chunk_id in seen:
+      continue
+    seen.add(chunk_id)
+    merged.append(dict(row))
+
+  vector_rank = {row["id"]: idx for idx, row in enumerate(vector_rows)}
+  keyword_rank = {row["id"]: idx for idx, row in enumerate(keyword_rows)}
+  candidates = {}
+  for row in vector_rows + keyword_rows:
+    chunk_id = row["id"]
+    if chunk_id in seen:
+      continue
+    candidates[chunk_id] = dict(row)
+
+  ranked = sorted(
+    candidates.values(),
+    key=lambda row: (
+      1 if current_chapter_index is not None and row["chapter_index"] == current_chapter_index else 0,
+      -(vector_rank.get(row["id"], 999)),
+      -(keyword_rank.get(row["id"], 999)),
+      -abs(position_index - row["position_index"]),
+      row["position_index"],
+    ),
+    reverse=True,
+  )
+
+  for row in ranked:
+    if len(merged) >= limit:
+      break
+    seen.add(row["id"])
+    merged.append(row)
+
+  return merged
+
+
 def _iter_virtual_chapter_matches(text: str, pattern: str, detection_mode: str):
   source = text or ""
   marker = (pattern or "").strip()
@@ -494,6 +660,42 @@ def index():
 @app.get("/read/{book_id}", response_class=HTMLResponse)
 def read_page(book_id: int):
   return (STATIC_DIR / "index.html").read_text()
+
+
+@app.get("/wiki/{book_id}")
+def open_book_wiki(book_id: int):
+  conn = connect()
+  try:
+    book = _book_row_or_404(conn, book_id)
+    pos = conn.execute("SELECT chapter_index FROM book_positions WHERE book_id = ?", (book_id,)).fetchone()
+    target = resolve_default_wiki_view(
+      conn,
+      book_id,
+      book["title"],
+      book["epub_path"],
+      pos["chapter_index"] if pos and pos["chapter_index"] is not None else None,
+    )
+    if not target:
+      raise HTTPException(status_code=404, detail="No spoiler-safe wiki checkpoint is available yet for this book")
+    return RedirectResponse(target["url"], status_code=307)
+  finally:
+    conn.close()
+
+
+@app.get("/wiki/{book_id}/viewer")
+def open_book_wiki_viewer(book_id: int):
+  conn = connect()
+  try:
+    book = _book_row_or_404(conn, book_id)
+    bundle = ensure_wiki_artifacts(book["title"], book["epub_path"])
+    if not bundle or not bundle.get("viewer_path"):
+      raise HTTPException(status_code=404, detail="Wiki viewer is not available for this book")
+    viewer_path = Path(bundle["viewer_path"])
+    if not viewer_path.exists():
+      raise HTTPException(status_code=404, detail="Wiki viewer file is missing")
+    return FileResponse(viewer_path, media_type="text/html")
+  finally:
+    conn.close()
 
 
 def _static_asset_response(filename: str, media_type: str):
@@ -588,27 +790,39 @@ def save_settings(payload: SettingsUpdate):
 @app.get("/api/books")
 def list_books():
   conn = connect()
-  rows = conn.execute(
-    """
-    SELECT
-      b.*,
-      bp.chapter_index,
-      bp.chapter_percent,
-      bp.book_percent,
-      bp.position_index,
-      bp.updated_at AS last_read_at,
-      c.title AS chapter_title
-    FROM books b
-    LEFT JOIN book_positions bp ON bp.book_id = b.id
-    LEFT JOIN chapters c ON c.book_id = b.id AND c.chapter_index = bp.chapter_index
-    WHERE b.epub_path IS NOT NULL
-    ORDER BY COALESCE(bp.updated_at, b.created_at) DESC, b.id DESC
-    """
-  ).fetchall()
+  try:
+    rows = conn.execute(
+      """
+      SELECT
+        b.*,
+        bp.chapter_index,
+        bp.chapter_percent,
+        bp.book_percent,
+        bp.position_index,
+        bp.updated_at AS last_read_at,
+        c.title AS chapter_title
+      FROM books b
+      LEFT JOIN book_positions bp ON bp.book_id = b.id
+      LEFT JOIN chapters c ON c.book_id = b.id AND c.chapter_index = bp.chapter_index
+      WHERE b.epub_path IS NOT NULL
+      ORDER BY COALESCE(bp.updated_at, b.created_at) DESC, b.id DESC
+      """
+    ).fetchall()
 
-  data = {"books": [dict(r) for r in rows]}
-  conn.close()
-  return data
+    books = []
+    for row in rows:
+      book = dict(row)
+      book["wiki"] = get_book_wiki_state(
+        conn,
+        book["id"],
+        book.get("title"),
+        book.get("epub_path"),
+        book.get("chapter_index"),
+      )
+      books.append(book)
+    return {"books": books}
+  finally:
+    conn.close()
 
 
 @app.get("/api/books/{book_id}")
@@ -628,6 +842,39 @@ def get_book(book_id: int):
       "chapters": [dict(r) for r in chapters],
       "current_position": dict(pos) if pos else None,
       "virtual_chapters": _virtual_chapter_state(conn, book_id),
+      "wiki": get_book_wiki_state(
+        conn,
+        book_id,
+        book["title"],
+        book["epub_path"],
+        pos["chapter_index"] if pos and pos["chapter_index"] is not None else None,
+      ),
+    }
+  finally:
+    conn.close()
+
+
+@app.post("/api/books/{book_id}/wiki/ingest")
+def ingest_wiki(book_id: int):
+  conn = connect()
+  try:
+    book = _book_row_or_404(conn, book_id)
+    bundle = ensure_wiki_ingested(conn, book_id, book["title"], book["epub_path"])
+    if not bundle:
+      raise HTTPException(status_code=404, detail="No wiki found for this book")
+
+    pos = conn.execute("SELECT chapter_index FROM book_positions WHERE book_id = ?", (book_id,)).fetchone()
+    return {
+      "ok": True,
+      "wiki": get_book_wiki_state(
+        conn,
+        book_id,
+        book["title"],
+        book["epub_path"],
+        pos["chapter_index"] if pos and pos["chapter_index"] is not None else None,
+      ),
+      "total_snapshots": len(bundle.get("snapshots") or []),
+      "viewer_path": bundle.get("viewer_path"),
     }
   finally:
     conn.close()
@@ -971,6 +1218,11 @@ def get_conversations(book_id: int):
         entry["sources"] = json.loads(raw) if raw else []
       except Exception:
         entry["sources"] = []
+      raw_retrieval = entry.get("retrieval_json")
+      try:
+        entry["retrieval_context"] = json.loads(raw_retrieval) if raw_retrieval else None
+      except Exception:
+        entry["retrieval_context"] = None
       data.append(entry)
 
     return {"conversations": data}
@@ -1124,9 +1376,10 @@ def delete_bookmark(book_id: int, bookmark_id: int):
 @app.post("/api/books/{book_id}/query")
 def query(book_id: int, payload: QueryRequest):
   conn = connect()
-  _book_row_or_404(conn, book_id)
+  book = _book_row_or_404(conn, book_id)
 
-  if not payload.question.strip():
+  question = payload.question.strip()
+  if not question:
     raise HTTPException(status_code=400, detail="Question is required")
 
   if payload.position_index is None:
@@ -1163,12 +1416,39 @@ def query(book_id: int, payload: QueryRequest):
 
   model = _validate_model(payload.model) if payload.model else _current_model(conn)
   citation_debug_mode = _current_citation_debug_mode(conn)
+  current_chapter_index = _position_chapter_index(conn, book_id, position_index, fallback=ask_chapter_index)
+
+  try:
+    base_question_embedding = embed_texts([question])[0]
+  except Exception as exc:
+    raise HTTPException(status_code=500, detail=f"Vector search unavailable: {exc}")
+
+  try:
+    wiki_context = load_query_wiki_context(
+      conn,
+      book_id,
+      book["title"],
+      book["epub_path"],
+      current_chapter_index,
+      question,
+      question_embedding=base_question_embedding,
+    )
+  except Exception:
+    wiki_context = None
+
+  expanded_question = question
+  if wiki_context and wiki_context.get("search_terms"):
+    expanded_question = (
+      f"{expanded_question}\n\nRelevant wiki terms: "
+      + ", ".join(wiki_context["search_terms"][:8])
+    )
 
   def _line(obj):
     return json.dumps(obj, ensure_ascii=False) + "\n"
 
   try:
-    query_vec = _serialize_vec(embed_texts([payload.question])[0])
+    query_embedding = base_question_embedding if expanded_question == question else embed_texts([expanded_question])[0]
+    query_vec = _serialize_vec(query_embedding)
     rows = conn.execute(
       "SELECT chunk_id, distance FROM vec_chunks WHERE book_id = ? AND position_index <= ? AND embedding MATCH ? ORDER BY distance LIMIT 12",
       (book_id, position_index, query_vec),
@@ -1177,18 +1457,28 @@ def query(book_id: int, payload: QueryRequest):
     raise HTTPException(status_code=500, detail=f"Vector search unavailable: {exc}")
 
   chunk_ids = [r["chunk_id"] for r in rows]
-  excerpts = []
-  if chunk_ids:
-    placeholders = ",".join(["?"] * len(chunk_ids))
-    excerpt_rows = conn.execute(
-      f"SELECT * FROM chunks WHERE id IN ({placeholders})",
-      chunk_ids,
-    ).fetchall()
-    by_id = {r["id"]: dict(r) for r in excerpt_rows}
-    excerpts = [by_id[cid] for cid in chunk_ids if cid in by_id]
+  vector_rows = _fetch_chunks_by_ids(conn, chunk_ids)
+  local_rows = _current_chapter_excerpt_rows(conn, book_id, current_chapter_index, position_index, limit=4)
+  keyword_rows = _keyword_excerpt_rows(
+    conn,
+    book_id,
+    position_index,
+    (wiki_context or {}).get("search_terms") or [],
+    current_chapter_index,
+    limit=6,
+  )
+  excerpts = _merge_excerpt_rows(
+    vector_rows,
+    local_rows,
+    keyword_rows,
+    position_index,
+    current_chapter_index,
+    limit=12,
+  )
 
-  sources = [
+  chunk_sources = [
     {
+      "source_type": "chunk",
       "chunk_id": ex["id"],
       "chapter_index": ex["chapter_index"],
       "chapter_title": ex.get("chapter_title"),
@@ -1203,15 +1493,33 @@ def query(book_id: int, payload: QueryRequest):
     }
     for ex in excerpts
   ]
+  wiki_sources = list((wiki_context or {}).get("sources") or [])
+  sources = chunk_sources + wiki_sources
+  retrieval_context = {
+    "used_wiki": bool(wiki_context and wiki_context.get("context")),
+    "excerpt_count": len(chunk_sources),
+    "wiki_source_count": len(wiki_sources),
+    "wiki": (
+      {
+        "tag": wiki_context.get("tag"),
+        "story_label": wiki_context.get("story_label"),
+        "pages": wiki_context.get("pages"),
+      }
+      if wiki_context
+      else None
+    ),
+  }
 
   def stream():
     try:
-      if not excerpts:
+      yield _line({"type": "status", "stage": "retrieval_complete", "data": retrieval_context})
+      has_wiki_context = bool(wiki_context and wiki_context.get("context"))
+      if not excerpts and not has_wiki_context:
         answer = "I don't have enough information from the text you've read so far."
         _save_conversation(
           conn,
           book_id,
-          payload.question,
+          question,
           answer,
           model,
           position_index,
@@ -1221,12 +1529,28 @@ def query(book_id: int, payload: QueryRequest):
           ask_chapter_percent=ask_chapter_percent,
           ask_book_percent=ask_book_percent,
           ask_char_offset=ask_char_offset,
+          retrieval_context=retrieval_context,
         )
-        yield _line({"type": "done", "data": {"answer": answer, "sources": []}})
+        yield _line(
+          {
+            "type": "done",
+            "data": {
+              "answer": answer,
+              "sources": [],
+              "wiki": retrieval_context["wiki"],
+              "retrieval_context": retrieval_context,
+            },
+          }
+        )
         return
 
       answer_parts = []
-      for delta in stream_answer(payload.question, excerpts, model):
+      for delta in stream_answer(
+        question,
+        excerpts,
+        model,
+        wiki_context=(wiki_context or {}).get("context"),
+      ):
         answer_parts.append(delta)
         yield _line({"type": "delta", "delta": delta})
 
@@ -1237,7 +1561,7 @@ def query(book_id: int, payload: QueryRequest):
       _save_conversation(
         conn,
         book_id,
-        payload.question,
+        question,
         answer,
         model,
         position_index,
@@ -1247,8 +1571,19 @@ def query(book_id: int, payload: QueryRequest):
         ask_chapter_percent=ask_chapter_percent,
         ask_book_percent=ask_book_percent,
         ask_char_offset=ask_char_offset,
+        retrieval_context=retrieval_context,
       )
-      yield _line({"type": "done", "data": {"answer": answer, "sources": sources}})
+      yield _line(
+        {
+          "type": "done",
+          "data": {
+            "answer": answer,
+            "sources": sources,
+            "wiki": retrieval_context["wiki"],
+            "retrieval_context": retrieval_context,
+          },
+        }
+      )
     except Exception as exc:
       yield _line({"type": "error", "error": str(exc)})
     finally:

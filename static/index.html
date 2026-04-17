@@ -175,6 +175,11 @@
       border-bottom: 1px solid var(--border);
     }
 
+    .book-cover-wrap {
+      display: flex;
+      flex-direction: column;
+    }
+
     .book-cover.fallback {
       display: flex;
       align-items: center;
@@ -185,6 +190,31 @@
       font-size: 18px;
       line-height: 1.35;
       color: #eadcc8;
+    }
+
+    .book-cover-actions {
+      padding: 8px 12px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .book-cover-link {
+      display: inline-flex;
+      align-items: center;
+      font-size: 12px;
+      color: #e4d6c4;
+      text-decoration: none;
+      border: 1px solid #5d4c44;
+      border-radius: 999px;
+      background: rgba(26, 24, 22, 0.72);
+      padding: 5px 10px;
+    }
+
+    .book-cover-link:hover {
+      color: #f4e9da;
+      border-color: #8b704f;
+      background: rgba(36, 33, 30, 0.9);
     }
 
     .book-meta {
@@ -868,6 +898,16 @@
       color: var(--text-muted);
       font-size: 12px;
       padding-left: 2px;
+    }
+
+    .qa-answer-meta {
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid #4a433c;
+      color: #b8a999;
+      font-size: 11px;
+      line-height: 1.45;
+      white-space: pre-wrap;
     }
 
     .source-list {
@@ -2310,7 +2350,13 @@
     function sourceTextForMatching(source) { return normalizeText(source.anchor_text || source.snippet || ''); }
 
     async function jumpToSource(source, citationContext = null, options = null) {
-      if (!state.readerReady || !source) return;
+      if (!source) return;
+      if ((source.source_type || '') === 'wiki' || source.wiki_source_id != null) {
+        if (source.viewer_url) window.open(source.viewer_url, '_blank', 'noopener');
+        else showReaderStatusMessage('Wiki citation link is unavailable.');
+        return;
+      }
+      if (!state.readerReady) return;
       const opts = options || {};
       clearCitationHighlights();
       const ci = asNumber(source.chapter_index, null), cs = asNumber(source.canonical_start, null), ce = asNumber(source.canonical_end, null);
@@ -2993,17 +3039,52 @@
     function renderAnswerHtmlWithCitations(answer, sources) {
       const ss = Array.isArray(sources) ? sources : [];
       const raw = String(answer || '');
-      const c2i = new Map(); ss.forEach((s, i) => { if (s && s.chunk_id != null) c2i.set(String(s.chunk_id), i); });
-      const debug = { mode: 'none', canonical_markers: [], canonical_resolved_chunk_ids: [], canonical_unresolved_chunk_ids: [], fallback_markers: [], links: [], source_map: ss.map((s, i) => ({ index: i+1, chunk_id: s && s.chunk_id, chapter_index: s && s.chapter_index, canonical_start: s && s.canonical_start, canonical_end: s && s.canonical_end })) };
+      const chunkMap = new Map();
+      const wikiMap = new Map();
+      ss.forEach((s, i) => {
+        if (s && s.chunk_id != null) chunkMap.set(String(s.chunk_id), i);
+        if (s && s.wiki_source_id != null) wikiMap.set(String(s.wiki_source_id), i);
+      });
+      const debug = {
+        mode: 'none',
+        canonical_markers: [],
+        canonical_resolved_ids: [],
+        canonical_unresolved_ids: [],
+        fallback_markers: [],
+        links: [],
+        source_map: ss.map((s, i) => ({
+          index: i + 1,
+          source_type: (s && s.source_type) || (s && s.wiki_source_id != null ? 'wiki' : 'chunk'),
+          chunk_id: s && s.chunk_id,
+          wiki_source_id: s && s.wiki_source_id,
+          chapter_index: s && s.chapter_index,
+          canonical_start: s && s.canonical_start,
+          canonical_end: s && s.canonical_end,
+          page_path: s && s.page_path,
+        })),
+      };
       const cHtml = (idx, mode, marker) => `<a href="#" class="citation-link${mode==='fallback'?' citation-link-fallback':''}" data-source-idx="${idx}" data-citation-mode="${mode}" data-citation-marker="${escapeAttr(marker)}">[${idx+1}]</a>`;
       const used = new Set();
-      const canonical = /\[c:([^\]]+)\]/gi;
+      const canonical = /\[([cw]):([^\]]+)\]/gi;
       let last = 0, match; const parts = [];
       while ((match = canonical.exec(raw)) !== null) {
         parts.push(escapeHtml(raw.slice(last, match.index)));
         const rawMarker = String(match[0]); debug.canonical_markers.push(rawMarker);
-        const ids = [...String(match[1]).matchAll(/\d+/g)].map(m => m[0]);
-        const links = []; ids.forEach(id => { const idx = c2i.has(id) ? c2i.get(id) : -1; if (idx >= 0) { used.add(idx); debug.canonical_resolved_chunk_ids.push(id); debug.links.push({ mode: 'canonical', marker: rawMarker, source_index: idx+1, chunk_id: id }); links.push(cHtml(idx, 'canonical', rawMarker)); } else debug.canonical_unresolved_chunk_ids.push(id); });
+        const sourceType = String(match[1] || '').toLowerCase() === 'w' ? 'wiki' : 'chunk';
+        const sourceMap = sourceType === 'wiki' ? wikiMap : chunkMap;
+        const ids = [...String(match[2]).matchAll(/\d+/g)].map(m => m[0]);
+        const links = [];
+        ids.forEach(id => {
+          const idx = sourceMap.has(id) ? sourceMap.get(id) : -1;
+          if (idx >= 0) {
+            used.add(idx);
+            debug.canonical_resolved_ids.push(`${sourceType}:${id}`);
+            debug.links.push({ mode: 'canonical', marker: rawMarker, source_index: idx + 1, source_type: sourceType, source_id: id });
+            links.push(cHtml(idx, 'canonical', rawMarker));
+          } else {
+            debug.canonical_unresolved_ids.push(`${sourceType}:${id}`);
+          }
+        });
         parts.push(links.length ? links.join(' ') : escapeHtml(rawMarker));
         last = match.index + rawMarker.length;
       }
@@ -3024,7 +3105,7 @@
     function formatCitationDebugText(debug) {
       if (!debug) return 'No citation debug data.';
       const lines = [`Mode: ${debug.mode}`];
-      if (debug.source_map) debug.source_map.forEach(s => lines.push(`  [${s.index}] chunk=${s.chunk_id} ch=${s.chapter_index} canon=${s.canonical_start}-${s.canonical_end}`));
+      if (debug.source_map) debug.source_map.forEach(s => lines.push(`  [${s.index}] type=${s.source_type} chunk=${s.chunk_id} wiki=${s.wiki_source_id} ch=${s.chapter_index} canon=${s.canonical_start}-${s.canonical_end} page=${s.page_path || ''}`));
       return lines.join('\n');
     }
 
@@ -3141,6 +3222,51 @@
       els.qaForwardBtn.disabled = !has || state.answerHistoryIndex >= state.answerHistory.length - 1;
     }
 
+    function formatRetrievalPendingLabel(retrievalContext, generating) {
+      const ctx = retrievalContext || null;
+      if (!ctx) return generating ? 'Generating answer…' : 'Pulling spoiler-safe context…';
+      const excerptCount = Math.max(0, parseInt(ctx.excerpt_count || 0, 10) || 0);
+      const wikiSourceCount = Math.max(0, parseInt(ctx.wiki_source_count || 0, 10) || 0);
+      const wiki = ctx.wiki || null;
+      if (generating) {
+        if (ctx.used_wiki && wiki && wiki.tag) return `Generating answer from wiki ${wiki.tag} and spoiler-safe text…`;
+        if (ctx.used_wiki) return 'Generating answer from wiki and spoiler-safe text…';
+        return 'Generating answer from spoiler-safe text…';
+      }
+      if (ctx.used_wiki && wiki && wiki.tag) {
+        if (excerptCount > 0) {
+          const wikiPart = wikiSourceCount > 0 ? ` (${wikiSourceCount} wiki section${wikiSourceCount === 1 ? '' : 's'})` : '';
+          return `Pulled wiki ${wiki.tag}${wikiPart} and ${excerptCount} spoiler-safe text excerpt${excerptCount === 1 ? '' : 's'}…`;
+        }
+        return wikiSourceCount > 0
+          ? `Pulled wiki ${wiki.tag} (${wikiSourceCount} wiki section${wikiSourceCount === 1 ? '' : 's'})…`
+          : `Pulled wiki ${wiki.tag}…`;
+      }
+      if (excerptCount > 0) return `Pulled ${excerptCount} spoiler-safe text excerpt${excerptCount === 1 ? '' : 's'}…`;
+      return 'Pulling spoiler-safe context…';
+    }
+
+    function formatRetrievalMeta(retrievalContext) {
+      const ctx = retrievalContext || null;
+      if (!ctx) return '';
+      const excerptCount = Math.max(0, parseInt(ctx.excerpt_count || 0, 10) || 0);
+      const wikiSourceCount = Math.max(0, parseInt(ctx.wiki_source_count || 0, 10) || 0);
+      const wiki = ctx.wiki || null;
+      const parts = [];
+      if (ctx.used_wiki && wiki && wiki.tag) {
+        parts.push(`Context: wiki ${wiki.tag}`);
+      } else if (ctx.used_wiki) {
+        parts.push('Context: wiki background');
+      } else {
+        parts.push('Context: text retrieval only');
+      }
+      if (wikiSourceCount > 0) parts.push(`${wikiSourceCount} wiki section${wikiSourceCount === 1 ? '' : 's'}`);
+      if (excerptCount > 0) parts.push(`${excerptCount} spoiler-safe text excerpt${excerptCount === 1 ? '' : 's'}`);
+      const pageTitles = Array.isArray(wiki && wiki.pages) ? wiki.pages.map(p => p && p.title).filter(Boolean) : [];
+      if (pageTitles.length) parts.push(`Pages: ${pageTitles.slice(0, 4).join(', ')}`);
+      return parts.join('\n');
+    }
+
     function renderAnswerHistory() {
       els.qaMessages.innerHTML = '';
       if (state.answerHistoryIndex < 0 || !state.answerHistory.length) {
@@ -3152,9 +3278,11 @@
       const ai = document.createElement('div'); ai.className = 'msg msg-ai';
       const rendered = renderAnswerHtmlWithCitations(entry.answer || '', entry.sources || []);
       ai.innerHTML = rendered.html;
+      const retrievalMeta = formatRetrievalMeta(entry.retrieval_context);
+      if (retrievalMeta) { const meta = document.createElement('div'); meta.className = 'qa-answer-meta'; meta.textContent = retrievalMeta; ai.appendChild(meta); }
       if (isCitationDebugEnabled()) { const d = document.createElement('details'); d.className = 'citation-debug'; const s = document.createElement('summary'); s.textContent = 'Citation debug'; const b = document.createElement('pre'); b.textContent = formatCitationDebugText(rendered.debug); d.append(s, b); ai.appendChild(d); }
       els.qaMessages.append(user, ai);
-      if (entry.pending) { const p = document.createElement('div'); p.className = 'msg-state'; p.textContent = 'Thinking…'; els.qaMessages.appendChild(p); }
+      if (entry.pending) { const p = document.createElement('div'); p.className = 'msg-state'; p.textContent = entry.pending_label || 'Thinking…'; els.qaMessages.appendChild(p); }
       if (entry.error) { const e = document.createElement('div'); e.className = 'msg-state'; e.style.color = '#ffb3a6'; e.textContent = `Error: ${entry.error}`; els.qaMessages.appendChild(e); }
       els.qaMessages.scrollTop = els.qaMessages.scrollHeight; updateAnswerHistoryControls();
     }
@@ -3171,7 +3299,7 @@
       if (!question || state.isAsking || !state.currentBookId) return;
       if (state.currentBook && state.currentBook.embedding_status !== 'ready') { alert('This book is still indexing.'); return; }
       state.isAsking = true; els.qaSendBtn.disabled = true; els.qaInput.value = '';
-      const entry = { question, answer: '', sources: [], position_context: state.currentPosition && state.currentPosition.position_index != null ? state.currentPosition.position_index : null, ask_cfi: null, ask_chapter_index: state.currentPosition && state.currentPosition.chapter_index != null ? state.currentPosition.chapter_index : null, ask_chapter_percent: state.currentPosition && state.currentPosition.chapter_percent != null ? state.currentPosition.chapter_percent : null, ask_book_percent: state.currentPosition && state.currentPosition.book_percent != null ? state.currentPosition.book_percent : null, ask_char_offset: Number.isFinite(state.currentCharOffset) ? state.currentCharOffset : null, timestamp: new Date().toISOString(), pending: true };
+      const entry = { question, answer: '', sources: [], retrieval_context: null, pending_label: 'Pulling spoiler-safe context…', answer_started: false, position_context: state.currentPosition && state.currentPosition.position_index != null ? state.currentPosition.position_index : null, ask_cfi: null, ask_chapter_index: state.currentPosition && state.currentPosition.chapter_index != null ? state.currentPosition.chapter_index : null, ask_chapter_percent: state.currentPosition && state.currentPosition.chapter_percent != null ? state.currentPosition.chapter_percent : null, ask_book_percent: state.currentPosition && state.currentPosition.book_percent != null ? state.currentPosition.book_percent : null, ask_char_offset: Number.isFinite(state.currentCharOffset) ? state.currentCharOffset : null, timestamp: new Date().toISOString(), pending: true };
       pushAnswerHistory(entry); openQaPanel();
       try {
         const res = await fetch(`/api/books/${state.currentBookId}/query`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, position_index: entry.position_context, model: els.qaModelSelect.value, ask_chapter_index: entry.ask_chapter_index, ask_chapter_percent: entry.ask_chapter_percent, ask_book_percent: entry.ask_book_percent, ask_char_offset: entry.ask_char_offset }) });
@@ -3180,9 +3308,43 @@
         while (true) {
           const { value, done } = await reader.read(); if (done) break;
           buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop() || '';
-          for (const line of lines) { if (!line.trim()) continue; const ev = JSON.parse(line); if (ev.type === 'delta') { entry.answer += ev.delta || ''; renderAnswerHistory(); } else if (ev.type === 'done') { entry.answer = ev.data && ev.data.answer ? ev.data.answer : entry.answer; entry.sources = ev.data && ev.data.sources ? ev.data.sources : []; entry.pending = false; renderAnswerHistory(); } else if (ev.type === 'error') { entry.pending = false; entry.error = ev.error || 'Unknown error'; renderAnswerHistory(); } }
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const ev = JSON.parse(line);
+            if (ev.type === 'status') {
+              entry.retrieval_context = ev.data || null;
+              entry.pending_label = formatRetrievalPendingLabel(entry.retrieval_context, false);
+              renderAnswerHistory();
+            } else if (ev.type === 'delta') {
+              if (!entry.answer_started) {
+                entry.answer_started = true;
+                entry.pending_label = formatRetrievalPendingLabel(entry.retrieval_context, true);
+              }
+              entry.answer += ev.delta || '';
+              renderAnswerHistory();
+            } else if (ev.type === 'done') {
+              entry.answer = ev.data && ev.data.answer ? ev.data.answer : entry.answer;
+              entry.sources = ev.data && ev.data.sources ? ev.data.sources : [];
+              entry.retrieval_context = ev.data && ev.data.retrieval_context ? ev.data.retrieval_context : entry.retrieval_context;
+              entry.pending = false;
+              renderAnswerHistory();
+            } else if (ev.type === 'error') {
+              entry.pending = false;
+              entry.error = ev.error || 'Unknown error';
+              renderAnswerHistory();
+            }
+          }
         }
-        if (buffer.trim()) { const ev = JSON.parse(buffer); if (ev.type === 'done') { entry.answer = ev.data && ev.data.answer ? ev.data.answer : entry.answer; entry.sources = ev.data && ev.data.sources ? ev.data.sources : []; } else if (ev.type === 'error') entry.error = ev.error; }
+        if (buffer.trim()) {
+          const ev = JSON.parse(buffer);
+          if (ev.type === 'status') {
+            entry.retrieval_context = ev.data || null;
+          } else if (ev.type === 'done') {
+            entry.answer = ev.data && ev.data.answer ? ev.data.answer : entry.answer;
+            entry.sources = ev.data && ev.data.sources ? ev.data.sources : [];
+            entry.retrieval_context = ev.data && ev.data.retrieval_context ? ev.data.retrieval_context : entry.retrieval_context;
+          } else if (ev.type === 'error') entry.error = ev.error;
+        }
       } catch (err) { entry.error = err.message; }
       finally { entry.pending = false; state.isAsking = false; els.qaSendBtn.disabled = false; renderAnswerHistory(); }
     }
@@ -3200,6 +3362,9 @@
         question: c.question,
         answer: c.answer,
         sources: c.sources || [],
+        retrieval_context: c.retrieval_context || null,
+        pending_label: null,
+        answer_started: true,
         position_context: c.position_context,
         ask_cfi: c.ask_cfi || null,
         ask_chapter_index: c.ask_chapter_index != null ? c.ask_chapter_index : null,
@@ -3290,10 +3455,20 @@
     async function loadBooks() { const data = await fetchJson('/api/books'); state.books = data.books || []; renderBooks(); }
 
     function buildCover(book) {
-      const wrap = document.createElement('div');
+      const wrap = document.createElement('div'); wrap.className = 'book-cover-wrap';
+      const media = document.createElement('div');
       const img = document.createElement('img'); img.className = 'book-cover'; img.loading = 'lazy'; img.alt = `Cover for ${book.title}`; img.src = `/api/books/${book.id}/cover`;
-      img.onerror = () => { const f = document.createElement('div'); f.className = 'book-cover fallback'; f.textContent = book.title || 'Untitled'; wrap.replaceChildren(f); };
-      wrap.appendChild(img); return wrap;
+      img.onerror = () => { const f = document.createElement('div'); f.className = 'book-cover fallback'; f.textContent = book.title || 'Untitled'; media.replaceChildren(f); };
+      media.appendChild(img);
+      wrap.appendChild(media);
+      if (book.wiki && book.wiki.url) {
+        const actions = document.createElement('div'); actions.className = 'book-cover-actions';
+        const link = document.createElement('a'); link.className = 'book-cover-link'; link.href = book.wiki.url; link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Open Wiki';
+        link.addEventListener('click', event => event.stopPropagation());
+        actions.appendChild(link);
+        wrap.appendChild(actions);
+      }
+      return wrap;
     }
 
     function renderBooks() {

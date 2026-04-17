@@ -70,8 +70,43 @@ CREATE TABLE IF NOT EXISTS conversations (
   ask_book_percent REAL,
   ask_char_offset INTEGER,
   sources_json TEXT,
+  retrieval_json TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS wiki_ingests (
+  book_id INTEGER PRIMARY KEY,
+  wiki_dir TEXT NOT NULL,
+  snapshot_path TEXT NOT NULL,
+  snapshot_mtime_ns INTEGER,
+  viewer_path TEXT,
+  viewer_mtime_ns INTEGER,
+  total_snapshots INTEGER DEFAULT 0,
+  total_sections INTEGER DEFAULT 0,
+  latest_tag TEXT,
+  latest_story_order INTEGER,
+  status TEXT DEFAULT 'ready',
+  last_error TEXT,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS wiki_sections (
+  id INTEGER PRIMARY KEY,
+  book_id INTEGER NOT NULL,
+  snapshot_tag TEXT NOT NULL,
+  snapshot_rank INTEGER NOT NULL,
+  story_order INTEGER,
+  page_path TEXT NOT NULL,
+  page_title TEXT NOT NULL,
+  category TEXT,
+  section_heading TEXT,
+  section_index INTEGER NOT NULL DEFAULT 0,
+  section_text TEXT NOT NULL,
+  UNIQUE(book_id, snapshot_tag, page_path, section_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wiki_sections_book_snapshot
+  ON wiki_sections(book_id, snapshot_rank, page_path);
 
 CREATE TABLE IF NOT EXISTS bookmarks (
   id INTEGER PRIMARY KEY,
@@ -111,6 +146,14 @@ USING vec0(
   chunk_id integer,
   book_id integer,
   position_index integer
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_wiki_sections
+USING vec0(
+  embedding float[1536],
+  section_id integer,
+  book_id integer,
+  snapshot_rank integer
 );
 """
 
@@ -206,6 +249,7 @@ def _migrate(conn: sqlite3.Connection):
         ask_book_percent REAL,
         ask_char_offset INTEGER,
         sources_json TEXT,
+        retrieval_json TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
       DROP TABLE conversations_old;
@@ -217,6 +261,7 @@ def _migrate(conn: sqlite3.Connection):
   _ensure_column(conn, "conversations", "ask_chapter_percent", "REAL")
   _ensure_column(conn, "conversations", "ask_book_percent", "REAL")
   _ensure_column(conn, "conversations", "ask_char_offset", "INTEGER")
+  _ensure_column(conn, "conversations", "retrieval_json", "TEXT")
 
   conn.execute(
     """

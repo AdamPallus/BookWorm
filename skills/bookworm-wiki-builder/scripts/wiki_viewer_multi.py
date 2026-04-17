@@ -575,10 +575,14 @@ body {{
 const allSnapshots = {snapshots_json};
 const tagMetadata = {tags_json};
 const categoryConfig = {category_config};
+const urlParams = new URLSearchParams(window.location.search);
+const requestedTag = urlParams.get('tag');
+const requestedPage = urlParams.get('page');
 
 let currentTag = null;
 let currentPage = null;
 let previousSnapshot = null;
+let pendingPage = requestedPage || 'wiki/index.md';
 
 // Populate chapter selector
 const select = document.getElementById('chapterSelect');
@@ -594,6 +598,7 @@ function switchChapter(tag) {{
   currentTag = tag;
   const snapshot = allSnapshots[tag];
   if (!snapshot) return;
+  select.value = tag;
 
   // Update stats
   const tm = tagMetadata.find(t => t.tag === tag);
@@ -604,11 +609,11 @@ function switchChapter(tag) {{
   buildSidebar(snapshot);
 
   // Navigate to index or current page
-  if (currentPage && snapshot[currentPage]) {{
-    navigateTo(currentPage);
-  }} else {{
-    navigateTo('wiki/index.md');
-  }}
+  const nextPage = pendingPage && snapshot[pendingPage]
+    ? pendingPage
+    : (currentPage && snapshot[currentPage] ? currentPage : 'wiki/index.md');
+  pendingPage = null;
+  navigateTo(nextPage);
 }}
 
 function buildSidebar(snapshot) {{
@@ -642,7 +647,12 @@ function buildSidebar(snapshot) {{
     for (const p of pages) {{
       const item = document.createElement('a');
       item.className = 'nav-item';
-      item.onclick = () => navigateTo(p.path);
+      item.href = '#';
+      item.dataset.pagePath = p.path;
+      item.onclick = (event) => {{
+        event.preventDefault();
+        navigateTo(p.path);
+      }};
 
       let label = p.title;
       item.innerHTML = label;
@@ -677,33 +687,28 @@ function navigateTo(pageId) {{
   currentPage = pageId;
   document.getElementById('content').innerHTML = page.html;
   document.getElementById('content').scrollTop = 0;
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.set('tag', currentTag);
+  nextUrl.searchParams.set('page', currentPage);
+  history.replaceState(null, '', nextUrl.toString());
 
   // Update active state
   document.querySelectorAll('.nav-item').forEach(el => {{
     el.classList.remove('active');
   }});
-  // Find matching nav item
   document.querySelectorAll('.nav-item').forEach(el => {{
-    if (el.onclick && el.onclick.toString().includes(pageId)) {{
+    if (el.dataset && el.dataset.pagePath === pageId) {{
       el.classList.add('active');
     }}
-  }});
-  // Simpler approach: match by click handler
-  const navItems = document.querySelectorAll('.nav-item');
-  navItems.forEach(item => {{
-    item.classList.remove('active');
-  }});
-  // Re-mark active by matching page path in the nav
-  navItems.forEach(item => {{
-    // Store path as data attribute for reliable matching
   }});
 
   return false;
 }}
 
-// Auto-select the last tag
-select.value = '{default_tag}';
-switchChapter('{default_tag}');
+// Auto-select the requested tag or the last tag
+const initialTag = requestedTag && allSnapshots[requestedTag] ? requestedTag : '{default_tag}';
+select.value = initialTag;
+switchChapter(initialTag);
 </script>
 
 </body>
