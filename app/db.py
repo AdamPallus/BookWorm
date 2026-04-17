@@ -138,6 +138,56 @@ CREATE TABLE IF NOT EXISTS virtual_chapter_settings (
   detection_mode TEXT NOT NULL DEFAULT 'strict',
   toc_display_mode TEXT NOT NULL DEFAULT 'merged'
 );
+
+CREATE TABLE IF NOT EXISTS wikis (
+  id INTEGER PRIMARY KEY,
+  slug TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  repo_path TEXT NOT NULL,
+  target_segment_tokens INTEGER NOT NULL DEFAULT 7000,
+  min_segment_tokens INTEGER NOT NULL DEFAULT 3000,
+  max_segment_tokens INTEGER NOT NULL DEFAULT 12000,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS wiki_books (
+  wiki_id INTEGER NOT NULL,
+  book_id INTEGER NOT NULL,
+  series_index INTEGER NOT NULL,
+  PRIMARY KEY (wiki_id, book_id),
+  UNIQUE (wiki_id, series_index)
+);
+
+CREATE TABLE IF NOT EXISTS wiki_segments (
+  id INTEGER PRIMARY KEY,
+  wiki_id INTEGER NOT NULL,
+  book_id INTEGER NOT NULL,
+  chapter_index INTEGER NOT NULL,
+  segment_in_chapter INTEGER NOT NULL,
+  story_order INTEGER NOT NULL,
+  start_char INTEGER NOT NULL,
+  end_char INTEGER NOT NULL,
+  start_position_index INTEGER,
+  end_position_index INTEGER,
+  token_count INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  applied_at TEXT,
+  snapshot_tag TEXT,
+  UNIQUE (wiki_id, story_order),
+  UNIQUE (book_id, chapter_index, segment_in_chapter)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wiki_segments_status
+  ON wiki_segments(wiki_id, status, story_order);
+
+CREATE TABLE IF NOT EXISTS wiki_segment_summaries (
+  segment_id INTEGER PRIMARY KEY,
+  summary_json TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 VEC_SCHEMA = """
