@@ -910,6 +910,105 @@
       white-space: pre-wrap;
     }
 
+    .qa-thread {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .qa-thread-followups {
+      align-self: stretch;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-left: 18px;
+      padding-left: 10px;
+      border-left: 2px solid #45403a;
+    }
+
+    .qa-followup-toggle {
+      align-self: flex-start;
+      margin-top: 6px;
+      background: transparent;
+      border: 1px solid #5a5048;
+      color: #d8c4ae;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+
+    .qa-followup-toggle:hover { background: #3a342f; }
+
+    .qa-followup-composer {
+      align-self: stretch;
+      margin-top: 6px;
+      background: #2b2724;
+      border: 1px solid #4a433c;
+      border-radius: 10px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .qa-followup-composer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: #b8a999;
+      font-size: 11px;
+    }
+
+    .qa-followup-composer-header button {
+      background: transparent;
+      border: none;
+      color: #b8a999;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .qa-followup-composer textarea {
+      width: 100%;
+      resize: none;
+      min-height: 44px;
+      max-height: 120px;
+      border: 1px solid #4a433c;
+      border-radius: 8px;
+      background: #1f1c1a;
+      color: var(--text);
+      padding: 8px;
+      outline: none;
+      font: inherit;
+      font-size: 13px;
+    }
+
+    .qa-followup-composer textarea:focus {
+      border-color: #8c6a37;
+      box-shadow: 0 0 0 2px rgba(212, 160, 72, 0.2);
+    }
+
+    .qa-followup-composer .qa-followup-actions {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .qa-followup-composer .qa-followup-send {
+      padding: 5px 12px;
+      border-radius: 8px;
+      border: none;
+      font-weight: 700;
+      color: #2f210f;
+      background: linear-gradient(180deg, #e2b560, #c18834);
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .qa-followup-composer .qa-followup-send:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
     .source-list {
       margin-top: 8px;
       display: flex;
@@ -1230,7 +1329,7 @@
       ></textarea>
       <div style="display:flex; flex-direction:column; gap:8px; min-width:108px;">
         <select id="qaModelSelect"></select>
-        <button id="qaSendBtn" class="send-btn">Send</button>
+        <button id="qaSendBtn" class="send-btn">Ask new question</button>
       </div>
     </div>
   </aside>
@@ -1379,7 +1478,7 @@
     /* ──────────────────────────── State ──────────────────────────── */
     const state = {
       settings: null, books: [], currentBookId: null, currentBook: null,
-      chapters: [], currentPosition: null, answerHistory: [], answerHistoryIndex: -1,
+      chapters: [], currentPosition: null, answerHistory: [], answerHistoryIndex: -1, followUpComposerSessionId: null,
       ebook: null, readerReady: false, chapterJumpInFlight: false,
       pendingPosition: null, positionTimer: null, lastPositionSentAt: 0,
       isAsking: false, returnStack: [], returnDismissTimer: null, suppressReturnDismissUntil: 0,
@@ -3267,6 +3366,21 @@
       return parts.join('\n');
     }
 
+    function appendAnswerEntry(parent, entry, options = {}) {
+      const { citationSources = null } = options;
+      const user = document.createElement('div'); user.className = 'msg msg-user'; user.textContent = entry.question;
+      const ai = document.createElement('div'); ai.className = 'msg msg-ai';
+      const sourcesForCitations = citationSources != null ? citationSources : (entry.sources || []);
+      const rendered = renderAnswerHtmlWithCitations(entry.answer || '', sourcesForCitations);
+      ai.innerHTML = rendered.html;
+      const retrievalMeta = formatRetrievalMeta(entry.retrieval_context);
+      if (retrievalMeta) { const meta = document.createElement('div'); meta.className = 'qa-answer-meta'; meta.textContent = retrievalMeta; ai.appendChild(meta); }
+      if (isCitationDebugEnabled()) { const d = document.createElement('details'); d.className = 'citation-debug'; const s = document.createElement('summary'); s.textContent = 'Citation debug'; const b = document.createElement('pre'); b.textContent = formatCitationDebugText(rendered.debug); d.append(s, b); ai.appendChild(d); }
+      parent.append(user, ai);
+      if (entry.pending) { const p = document.createElement('div'); p.className = 'msg-state'; p.textContent = entry.pending_label || 'Thinking…'; parent.appendChild(p); }
+      if (entry.error) { const e = document.createElement('div'); e.className = 'msg-state'; e.style.color = '#ffb3a6'; e.textContent = `Error: ${entry.error}`; parent.appendChild(e); }
+    }
+
     function renderAnswerHistory() {
       els.qaMessages.innerHTML = '';
       if (state.answerHistoryIndex < 0 || !state.answerHistory.length) {
@@ -3274,17 +3388,85 @@
         els.qaMessages.appendChild(e); updateQaContext(null); updateAnswerHistoryControls(); return;
       }
       const entry = state.answerHistory[state.answerHistoryIndex]; updateQaContext(entry);
-      const user = document.createElement('div'); user.className = 'msg msg-user'; user.textContent = entry.question;
-      const ai = document.createElement('div'); ai.className = 'msg msg-ai';
-      const rendered = renderAnswerHtmlWithCitations(entry.answer || '', entry.sources || []);
-      ai.innerHTML = rendered.html;
-      const retrievalMeta = formatRetrievalMeta(entry.retrieval_context);
-      if (retrievalMeta) { const meta = document.createElement('div'); meta.className = 'qa-answer-meta'; meta.textContent = retrievalMeta; ai.appendChild(meta); }
-      if (isCitationDebugEnabled()) { const d = document.createElement('details'); d.className = 'citation-debug'; const s = document.createElement('summary'); s.textContent = 'Citation debug'; const b = document.createElement('pre'); b.textContent = formatCitationDebugText(rendered.debug); d.append(s, b); ai.appendChild(d); }
-      els.qaMessages.append(user, ai);
-      if (entry.pending) { const p = document.createElement('div'); p.className = 'msg-state'; p.textContent = entry.pending_label || 'Thinking…'; els.qaMessages.appendChild(p); }
-      if (entry.error) { const e = document.createElement('div'); e.className = 'msg-state'; e.style.color = '#ffb3a6'; e.textContent = `Error: ${entry.error}`; els.qaMessages.appendChild(e); }
+
+      appendAnswerEntry(els.qaMessages, entry);
+
+      const followUps = Array.isArray(entry.followUps) ? entry.followUps : [];
+      if (followUps.length) {
+        const thread = document.createElement('div');
+        thread.className = 'qa-thread-followups';
+        for (const fu of followUps) appendAnswerEntry(thread, fu, { citationSources: entry.sources || [] });
+        els.qaMessages.appendChild(thread);
+      }
+
+      const sessionId = entry.openclaw_session_id;
+      const anyPending = entry.pending || followUps.some(f => f.pending);
+      if (sessionId && !anyPending) {
+        if (state.followUpComposerSessionId === sessionId) {
+          els.qaMessages.appendChild(buildFollowUpComposer(entry));
+        } else {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'qa-followup-toggle';
+          btn.textContent = '↪ Follow up';
+          btn.addEventListener('click', () => {
+            state.followUpComposerSessionId = sessionId;
+            renderAnswerHistory();
+            const ta = els.qaMessages.querySelector('.qa-followup-composer textarea');
+            if (ta) ta.focus();
+          });
+          els.qaMessages.appendChild(btn);
+        }
+      }
+
       els.qaMessages.scrollTop = els.qaMessages.scrollHeight; updateAnswerHistoryControls();
+    }
+
+    function buildFollowUpComposer(rootEntry) {
+      const box = document.createElement('div');
+      box.className = 'qa-followup-composer';
+
+      const header = document.createElement('div');
+      header.className = 'qa-followup-composer-header';
+      const label = document.createElement('span');
+      label.textContent = 'Following up on this answer';
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.title = 'Cancel follow-up';
+      cancel.textContent = '✕';
+      cancel.addEventListener('click', () => {
+        state.followUpComposerSessionId = null;
+        renderAnswerHistory();
+      });
+      header.append(label, cancel);
+
+      const ta = document.createElement('textarea');
+      ta.placeholder = 'Ask a follow-up about this answer…';
+      ta.rows = 2;
+      ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          submit();
+        }
+      });
+
+      const actions = document.createElement('div');
+      actions.className = 'qa-followup-actions';
+      const send = document.createElement('button');
+      send.type = 'button';
+      send.className = 'qa-followup-send';
+      send.textContent = 'Send follow-up';
+      send.addEventListener('click', submit);
+      actions.appendChild(send);
+
+      function submit() {
+        const text = ta.value.trim();
+        if (!text || state.isAsking) return;
+        askFollowUp(rootEntry, text);
+      }
+
+      box.append(header, ta, actions);
+      return box;
     }
 
     function pushAnswerHistory(entry) {
@@ -3299,7 +3481,8 @@
       if (!question || state.isAsking || !state.currentBookId) return;
       if (state.currentBook && state.currentBook.embedding_status !== 'ready') { alert('This book is still indexing.'); return; }
       state.isAsking = true; els.qaSendBtn.disabled = true; els.qaInput.value = '';
-      const entry = { question, answer: '', sources: [], retrieval_context: null, pending_label: 'Pulling spoiler-safe context…', answer_started: false, position_context: state.currentPosition && state.currentPosition.position_index != null ? state.currentPosition.position_index : null, ask_cfi: null, ask_chapter_index: state.currentPosition && state.currentPosition.chapter_index != null ? state.currentPosition.chapter_index : null, ask_chapter_percent: state.currentPosition && state.currentPosition.chapter_percent != null ? state.currentPosition.chapter_percent : null, ask_book_percent: state.currentPosition && state.currentPosition.book_percent != null ? state.currentPosition.book_percent : null, ask_char_offset: Number.isFinite(state.currentCharOffset) ? state.currentCharOffset : null, timestamp: new Date().toISOString(), pending: true };
+      const entry = { question, answer: '', sources: [], retrieval_context: null, openclaw_session_id: null, followUps: [], pending_label: 'Pulling spoiler-safe context…', answer_started: false, position_context: state.currentPosition && state.currentPosition.position_index != null ? state.currentPosition.position_index : null, ask_cfi: null, ask_chapter_index: state.currentPosition && state.currentPosition.chapter_index != null ? state.currentPosition.chapter_index : null, ask_chapter_percent: state.currentPosition && state.currentPosition.chapter_percent != null ? state.currentPosition.chapter_percent : null, ask_book_percent: state.currentPosition && state.currentPosition.book_percent != null ? state.currentPosition.book_percent : null, ask_char_offset: Number.isFinite(state.currentCharOffset) ? state.currentCharOffset : null, timestamp: new Date().toISOString(), pending: true };
+      state.followUpComposerSessionId = null;
       pushAnswerHistory(entry); openQaPanel();
       try {
         const res = await fetch(`/api/books/${state.currentBookId}/query`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, position_index: entry.position_context, model: els.qaModelSelect.value, ask_chapter_index: entry.ask_chapter_index, ask_chapter_percent: entry.ask_chapter_percent, ask_book_percent: entry.ask_book_percent, ask_char_offset: entry.ask_char_offset }) });
@@ -3326,6 +3509,7 @@
               entry.answer = ev.data && ev.data.answer ? ev.data.answer : entry.answer;
               entry.sources = ev.data && ev.data.sources ? ev.data.sources : [];
               entry.retrieval_context = ev.data && ev.data.retrieval_context ? ev.data.retrieval_context : entry.retrieval_context;
+              if (ev.data && ev.data.openclaw_session_id) entry.openclaw_session_id = ev.data.openclaw_session_id;
               entry.pending = false;
               renderAnswerHistory();
             } else if (ev.type === 'error') {
@@ -3343,10 +3527,82 @@
             entry.answer = ev.data && ev.data.answer ? ev.data.answer : entry.answer;
             entry.sources = ev.data && ev.data.sources ? ev.data.sources : [];
             entry.retrieval_context = ev.data && ev.data.retrieval_context ? ev.data.retrieval_context : entry.retrieval_context;
+            if (ev.data && ev.data.openclaw_session_id) entry.openclaw_session_id = ev.data.openclaw_session_id;
           } else if (ev.type === 'error') entry.error = ev.error;
         }
       } catch (err) { entry.error = err.message; }
       finally { entry.pending = false; state.isAsking = false; els.qaSendBtn.disabled = false; renderAnswerHistory(); }
+    }
+
+    async function askFollowUp(rootEntry, question) {
+      if (!question || state.isAsking || !state.currentBookId) return;
+      const sessionId = rootEntry && rootEntry.openclaw_session_id;
+      if (!sessionId) return;
+      state.isAsking = true;
+      els.qaSendBtn.disabled = true;
+      const followEntry = {
+        question,
+        answer: '',
+        sources: [],
+        retrieval_context: { follow_up: true },
+        openclaw_session_id: sessionId,
+        pending_label: 'Generating follow-up answer…',
+        answer_started: false,
+        position_context: rootEntry.position_context,
+        ask_cfi: rootEntry.ask_cfi || null,
+        ask_chapter_index: rootEntry.ask_chapter_index,
+        ask_chapter_percent: rootEntry.ask_chapter_percent,
+        ask_book_percent: rootEntry.ask_book_percent,
+        ask_char_offset: rootEntry.ask_char_offset,
+        timestamp: new Date().toISOString(),
+        pending: true,
+      };
+      if (!Array.isArray(rootEntry.followUps)) rootEntry.followUps = [];
+      rootEntry.followUps.push(followEntry);
+      state.followUpComposerSessionId = null;
+      renderAnswerHistory();
+      try {
+        const res = await fetch(`/api/books/${state.currentBookId}/query`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question,
+            model: els.qaModelSelect.value,
+            follow_up_to: sessionId,
+          }),
+        });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Follow-up failed'); }
+        const reader = res.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
+        while (true) {
+          const { value, done } = await reader.read(); if (done) break;
+          buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const ev = JSON.parse(line);
+            if (ev.type === 'delta') {
+              if (!followEntry.answer_started) { followEntry.answer_started = true; followEntry.pending_label = 'Generating follow-up answer…'; }
+              followEntry.answer += ev.delta || '';
+              renderAnswerHistory();
+            } else if (ev.type === 'done') {
+              followEntry.answer = ev.data && ev.data.answer ? ev.data.answer : followEntry.answer;
+              followEntry.retrieval_context = ev.data && ev.data.retrieval_context ? ev.data.retrieval_context : followEntry.retrieval_context;
+              followEntry.pending = false;
+              renderAnswerHistory();
+            } else if (ev.type === 'error') {
+              followEntry.pending = false;
+              followEntry.error = ev.error || 'Unknown error';
+              renderAnswerHistory();
+            }
+          }
+        }
+        if (buffer.trim()) {
+          const ev = JSON.parse(buffer);
+          if (ev.type === 'done') {
+            followEntry.answer = ev.data && ev.data.answer ? ev.data.answer : followEntry.answer;
+          } else if (ev.type === 'error') followEntry.error = ev.error;
+        }
+      } catch (err) { followEntry.error = err.message; }
+      finally { followEntry.pending = false; state.isAsking = false; els.qaSendBtn.disabled = false; renderAnswerHistory(); }
     }
 
     /* ─────────── Navigation / Library ─────────── */
@@ -3358,21 +3614,37 @@
     async function fetchJson(url, options) { const res = await fetch(url, options); const data = await res.json(); if (!res.ok) throw new Error(data.detail || 'Request failed'); return data; }
 
     function hydrateAnswerHistory(conversations) {
-      return (conversations || []).map(c => ({
-        question: c.question,
-        answer: c.answer,
-        sources: c.sources || [],
-        retrieval_context: c.retrieval_context || null,
-        pending_label: null,
-        answer_started: true,
-        position_context: c.position_context,
-        ask_cfi: c.ask_cfi || null,
-        ask_chapter_index: c.ask_chapter_index != null ? c.ask_chapter_index : null,
-        ask_chapter_percent: c.ask_chapter_percent != null ? c.ask_chapter_percent : null,
-        ask_book_percent: c.ask_book_percent != null ? c.ask_book_percent : null,
-        ask_char_offset: c.ask_char_offset != null ? c.ask_char_offset : null,
-        timestamp: c.created_at,
-      })).slice(-40);
+      const roots = [];
+      const rootBySession = new Map();
+      for (const c of (conversations || [])) {
+        const entry = {
+          question: c.question,
+          answer: c.answer,
+          sources: c.sources || [],
+          retrieval_context: c.retrieval_context || null,
+          openclaw_session_id: c.openclaw_session_id || null,
+          pending_label: null,
+          answer_started: true,
+          position_context: c.position_context,
+          ask_cfi: c.ask_cfi || null,
+          ask_chapter_index: c.ask_chapter_index != null ? c.ask_chapter_index : null,
+          ask_chapter_percent: c.ask_chapter_percent != null ? c.ask_chapter_percent : null,
+          ask_book_percent: c.ask_book_percent != null ? c.ask_book_percent : null,
+          ask_char_offset: c.ask_char_offset != null ? c.ask_char_offset : null,
+          timestamp: c.created_at,
+        };
+        const isFollowUp = entry.retrieval_context && entry.retrieval_context.follow_up === true;
+        if (isFollowUp && entry.openclaw_session_id && rootBySession.has(entry.openclaw_session_id)) {
+          const root = rootBySession.get(entry.openclaw_session_id);
+          if (!Array.isArray(root.followUps)) root.followUps = [];
+          root.followUps.push(entry);
+        } else {
+          entry.followUps = [];
+          roots.push(entry);
+          if (entry.openclaw_session_id) rootBySession.set(entry.openclaw_session_id, entry);
+        }
+      }
+      return roots.slice(-40);
     }
 
     function applyLoadedBookState(bookId, bookData, hydratedHistory) {

@@ -167,24 +167,44 @@ def _build_messages(question: str, excerpts: List[Dict], wiki_context: Optional[
   ]
 
 
+def new_session_id() -> str:
+  return f"bookworm-qa-{uuid.uuid4()}"
+
+
 def stream_answer(
   question: str,
   excerpts: List[Dict],
   model: str,
+  session_id: str,
   wiki_context: Optional[str] = None,
+) -> Generator[str, None, None]:
+  messages = _build_messages(question, excerpts, wiki_context=wiki_context)
+  flat_input = f"{messages[0]['content']}\n\n{messages[1]['content']}"
+  yield from _stream_openclaw(flat_input, model, session_id)
+
+
+def stream_follow_up(
+  question: str,
+  model: str,
+  session_id: str,
+) -> Generator[str, None, None]:
+  yield from _stream_openclaw(f"Follow-up question: {question}", model, session_id)
+
+
+def _stream_openclaw(
+  input_text: str,
+  model: str,
+  session_id: str,
 ) -> Generator[str, None, None]:
   _load_env()
   token = os.environ.get("OPENCLAW_GATEWAY_TOKEN")
   if not token:
     raise RuntimeError("OPENCLAW_GATEWAY_TOKEN is not set. Add it to .env.")
 
-  messages = _build_messages(question, excerpts, wiki_context=wiki_context)
-  flat_input = f"{messages[0]['content']}\n\n{messages[1]['content']}"
-
   payload = {
     "model": OPENCLAW_AGENT,
-    "input": flat_input,
-    "user": f"bookworm-qa-{uuid.uuid4()}",
+    "input": input_text,
+    "user": session_id,
     "stream": True,
   }
   headers = {

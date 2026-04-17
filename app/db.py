@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   ask_char_offset INTEGER,
   sources_json TEXT,
   retrieval_json TEXT,
+  openclaw_session_id TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -250,6 +251,7 @@ def _migrate(conn: sqlite3.Connection):
         ask_char_offset INTEGER,
         sources_json TEXT,
         retrieval_json TEXT,
+        openclaw_session_id TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
       DROP TABLE conversations_old;
@@ -262,6 +264,7 @@ def _migrate(conn: sqlite3.Connection):
   _ensure_column(conn, "conversations", "ask_book_percent", "REAL")
   _ensure_column(conn, "conversations", "ask_char_offset", "INTEGER")
   _ensure_column(conn, "conversations", "retrieval_json", "TEXT")
+  _ensure_column(conn, "conversations", "openclaw_session_id", "TEXT")
 
   conn.execute(
     """

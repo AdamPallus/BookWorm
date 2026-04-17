@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from .db import COVER_DIR, EPUB_DIR, connect, get_setting, set_setting
 from .ingest import chunk_chapter, extract_book
-from .rag import embed_texts, get_api_key, set_api_key, stream_answer
+from .rag import embed_texts, get_api_key, new_session_id, set_api_key, stream_answer, stream_follow_up
 from .wiki import ensure_wiki_artifacts, ensure_wiki_ingested, get_book_wiki_state, load_query_wiki_context, resolve_default_wiki_view
 
 try:
@@ -70,6 +70,7 @@ class QueryRequest(BaseModel):
   ask_chapter_percent: Optional[float] = None
   ask_book_percent: Optional[float] = None
   ask_char_offset: Optional[int] = None
+  follow_up_to: Optional[str] = None
 
 
 class SettingsUpdate(BaseModel):
@@ -221,12 +222,13 @@ def _save_conversation(
   ask_book_percent: Optional[float] = None,
   ask_char_offset: Optional[int] = None,
   retrieval_context: Optional[dict] = None,
+  openclaw_session_id: Optional[str] = None,
 ):
   conn.execute(
     """
     INSERT INTO conversations
-      (book_id, question, answer, model, position_context, ask_cfi, ask_chapter_index, ask_chapter_percent, ask_book_percent, ask_char_offset, sources_json, retrieval_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (book_id, question, answer, model, position_context, ask_cfi, ask_chapter_index, ask_chapter_percent, ask_book_percent, ask_char_offset, sources_json, retrieval_json, openclaw_session_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """,
     (
       book_id,
@@ -241,9 +243,70 @@ def _save_conversation(
       ask_char_offset,
       json.dumps(sources, ensure_ascii=False),
       json.dumps(retrieval_context, ensure_ascii=False) if retrieval_context is not None else None,
+      openclaw_session_id,
     ),
   )
   conn.commit()
+
+
+def _follow_up_query(conn, book_id: int, session_id: str, question: str, requested_model: Optional[str]):
+  parent = conn.execute(
+    "SELECT * FROM conversations WHERE book_id = ? AND openclaw_session_id = ? ORDER BY id ASC LIMIT 1",
+    (book_id, session_id),
+  ).fetchone()
+  if not parent:
+    conn.close()
+    raise HTTPException(status_code=404, detail="Original question not found for follow-up.")
+
+  model = _validate_model(requested_model) if requested_model else parent["model"] or _current_model(conn)
+  retrieval_context = {"follow_up": True, "parent_conversation_id": parent["id"]}
+
+  def _line(obj):
+    return json.dumps(obj, ensure_ascii=False) + "\n"
+
+  def stream():
+    try:
+      yield _line({"type": "status", "stage": "follow_up", "data": {"parent_id": parent["id"]}})
+      answer_parts = []
+      for delta in stream_follow_up(question, model, session_id):
+        answer_parts.append(delta)
+        yield _line({"type": "delta", "delta": delta})
+      answer = "".join(answer_parts).strip() or "(no response)"
+
+      _save_conversation(
+        conn,
+        book_id,
+        question,
+        answer,
+        model,
+        parent["position_context"] if parent["position_context"] is not None else 0,
+        [],
+        ask_cfi=parent["ask_cfi"],
+        ask_chapter_index=parent["ask_chapter_index"],
+        ask_chapter_percent=parent["ask_chapter_percent"],
+        ask_book_percent=parent["ask_book_percent"],
+        ask_char_offset=parent["ask_char_offset"],
+        retrieval_context=retrieval_context,
+        openclaw_session_id=session_id,
+      )
+      yield _line(
+        {
+          "type": "done",
+          "data": {
+            "answer": answer,
+            "sources": [],
+            "wiki": None,
+            "retrieval_context": retrieval_context,
+            "openclaw_session_id": session_id,
+          },
+        }
+      )
+    except Exception as exc:
+      yield _line({"type": "error", "error": str(exc)})
+    finally:
+      conn.close()
+
+  return StreamingResponse(stream(), media_type="application/x-ndjson")
 
 
 def _canonical_alnum_len(text: str) -> int:
@@ -1382,6 +1445,9 @@ def query(book_id: int, payload: QueryRequest):
   if not question:
     raise HTTPException(status_code=400, detail="Question is required")
 
+  if payload.follow_up_to:
+    return _follow_up_query(conn, book_id, payload.follow_up_to, question, payload.model)
+
   if payload.position_index is None:
     pos_row = conn.execute("SELECT * FROM book_positions WHERE book_id = ?", (book_id,)).fetchone()
     if not pos_row:
@@ -1417,6 +1483,7 @@ def query(book_id: int, payload: QueryRequest):
   model = _validate_model(payload.model) if payload.model else _current_model(conn)
   citation_debug_mode = _current_citation_debug_mode(conn)
   current_chapter_index = _position_chapter_index(conn, book_id, position_index, fallback=ask_chapter_index)
+  session_id = new_session_id()
 
   try:
     base_question_embedding = embed_texts([question])[0]
@@ -1530,6 +1597,7 @@ def query(book_id: int, payload: QueryRequest):
           ask_book_percent=ask_book_percent,
           ask_char_offset=ask_char_offset,
           retrieval_context=retrieval_context,
+          openclaw_session_id=session_id,
         )
         yield _line(
           {
@@ -1539,6 +1607,7 @@ def query(book_id: int, payload: QueryRequest):
               "sources": [],
               "wiki": retrieval_context["wiki"],
               "retrieval_context": retrieval_context,
+              "openclaw_session_id": session_id,
             },
           }
         )
@@ -1549,6 +1618,7 @@ def query(book_id: int, payload: QueryRequest):
         question,
         excerpts,
         model,
+        session_id,
         wiki_context=(wiki_context or {}).get("context"),
       ):
         answer_parts.append(delta)
@@ -1572,6 +1642,7 @@ def query(book_id: int, payload: QueryRequest):
         ask_book_percent=ask_book_percent,
         ask_char_offset=ask_char_offset,
         retrieval_context=retrieval_context,
+        openclaw_session_id=session_id,
       )
       yield _line(
         {
@@ -1581,6 +1652,7 @@ def query(book_id: int, payload: QueryRequest):
             "sources": sources,
             "wiki": retrieval_context["wiki"],
             "retrieval_context": retrieval_context,
+            "openclaw_session_id": session_id,
           },
         }
       )
