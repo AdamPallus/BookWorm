@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Dict, Generator, List, Optional
 
@@ -183,7 +184,7 @@ def stream_answer(
   payload = {
     "model": OPENCLAW_AGENT,
     "input": flat_input,
-    "user": "bookworm-qa",
+    "user": f"bookworm-qa-{uuid.uuid4()}",
     "stream": True,
   }
   headers = {
