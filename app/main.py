@@ -31,8 +31,8 @@ app.add_middleware(
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
-ALLOWED_MODELS = ["gpt-5-mini", "gpt-5", "gpt-5.2"]
-DEFAULT_MODEL = "gpt-5-mini"
+ALLOWED_MODELS = ["gpt-5.4-mini", "gpt-5.4"]
+DEFAULT_MODEL = "gpt-5.4-mini"
 DEFAULT_FONT_SIZE = 100
 ALLOWED_READER_SPREADS = ["single", "double"]
 DEFAULT_READER_SPREAD = "single"

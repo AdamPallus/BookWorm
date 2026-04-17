@@ -1,11 +1,17 @@
+import json
 import os
 from pathlib import Path
 from typing import Dict, Generator, List, Optional
 
+import httpx
 from openai import OpenAI
 
 _client = None
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+
+OPENCLAW_BASE_URL = "http://127.0.0.1:18789"
+OPENCLAW_AGENT = "openclaw/bookworm"
+OPENCLAW_BACKEND_PREFIX = "openai-codex/"
 
 SYSTEM_PROMPT = """
 You are a spoiler-free book companion.
@@ -166,26 +172,46 @@ def stream_answer(
   model: str,
   wiki_context: Optional[str] = None,
 ) -> Generator[str, None, None]:
-  stream = _get_client().chat.completions.create(
-    model=model,
-    messages=_build_messages(question, excerpts, wiki_context=wiki_context),
-    stream=True,
-  )
+  _load_env()
+  token = os.environ.get("OPENCLAW_GATEWAY_TOKEN")
+  if not token:
+    raise RuntimeError("OPENCLAW_GATEWAY_TOKEN is not set. Add it to .env.")
 
-  for event in stream:
-    choices = getattr(event, "choices", None) or []
-    if not choices:
-      continue
-    delta = getattr(choices[0], "delta", None)
-    if not delta:
-      continue
-    content = getattr(delta, "content", None)
-    if not content:
-      continue
-    if isinstance(content, str):
-      yield content
-    else:
-      for part in content:
-        text = getattr(part, "text", None)
-        if text:
-          yield text
+  messages = _build_messages(question, excerpts, wiki_context=wiki_context)
+  flat_input = f"{messages[0]['content']}\n\n{messages[1]['content']}"
+
+  payload = {
+    "model": OPENCLAW_AGENT,
+    "input": flat_input,
+    "user": "bookworm-qa",
+    "stream": True,
+  }
+  headers = {
+    "Authorization": f"Bearer {token}",
+    "Content-Type": "application/json",
+    "Accept": "text/event-stream",
+    "x-openclaw-model": f"{OPENCLAW_BACKEND_PREFIX}{model}",
+  }
+
+  with httpx.stream(
+    "POST",
+    f"{OPENCLAW_BASE_URL}/v1/responses",
+    headers=headers,
+    json=payload,
+    timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0),
+  ) as response:
+    response.raise_for_status()
+    for line in response.iter_lines():
+      if not line or not line.startswith("data:"):
+        continue
+      data = line[5:].strip()
+      if data == "[DONE]":
+        break
+      try:
+        evt = json.loads(data)
+      except json.JSONDecodeError:
+        continue
+      if evt.get("type") == "response.output_text.delta":
+        delta = evt.get("delta")
+        if delta:
+          yield delta
