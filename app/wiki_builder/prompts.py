@@ -100,7 +100,7 @@ HARD RULES — violations cause your output to be rejected:
      "questions_resolved": [
        { "id": "q-NNNN", "resolution": "<=200 chars", "evidence_quote": "verbatim substring of the segment, 12-320 chars" }
      ],
-     "log_entry": "1-3 sentences for log.md describing what changed"
+     "log_entry": "1-3 sentences for log.md describing what changed (REQUIRED, non-empty, at least 10 chars)"
    }
 
    For `pages_updated`, exactly one of `detail_append` / `detail_replace`
@@ -108,6 +108,17 @@ HARD RULES — violations cause your output to be rejected:
 
    Use empty arrays — not omitted keys — when there's nothing to add.
    `summary_card.key_events` MUST contain at least one item.
+   `log_entry` MUST be a non-empty string (10+ chars). If the segment is
+   short or quiet, write something like "Quiet transitional scene; no new
+   characters or facts." — never leave it empty.
+
+QUESTIONS — RESOLVE WITH CARE
+   Only add an entry to `questions_resolved` when ONE evidence_quote from
+   THIS segment fully answers the question on its own. If a question has
+   multiple parts and the segment only answers one part, leave it Active.
+   Never bundle two unrelated facts into one resolution. If your evidence
+   quote does not by itself prove the resolution, drop the entry — it is
+   better to leave a question open than to claim a weak resolution.
 
 8. RETRIES
    If your previous attempt was rejected, you will receive a list of issues.
