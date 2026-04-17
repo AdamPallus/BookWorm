@@ -203,6 +203,13 @@ def process_segment(
   mini_session = openclaw_client.new_session_id(label=f"mini-seg-{seg.story_order:04d}")
   prior_issues: Optional[list] = None
   prior_diff_str: Optional[str] = None
+  # Track the most recent diff that passed deterministic checks. If we run
+  # out of attempts but have one of these, we apply it with a warning rather
+  # than leave a hole in the wiki history. Hard requirements (schema, banned
+  # phrases, evidence quotes, q-id hygiene) are enforced deterministically;
+  # the supervisor is a best-effort second opinion.
+  last_valid_diff: Optional[dict] = None
+  last_supervisor_issues: Optional[list] = None
 
   for attempt in range(1, MAX_ATTEMPTS_PER_SEGMENT + 1):
     log.info("seg %s attempt %d", _format_tag(seg.story_order), attempt)
@@ -270,6 +277,10 @@ def process_segment(
       )
       continue
 
+    # This diff passes hard requirements. Remember it as a fallback even if
+    # the supervisor later rejects it.
+    last_valid_diff = diff
+
     sup_input = SUPERVISOR_SYSTEM_PROMPT + "\n\n" + build_supervisor_prompt(
       segment_text=segment_text,
       digest_text=digest.text,
@@ -333,13 +344,46 @@ def process_segment(
     if not issues:
       issues = [{"kind": "other", "where": "<top>", "explanation": "supervisor said not ok but gave no issues"}]
     prior_issues = _format_issues(issues)
+    last_supervisor_issues = prior_issues
     log.info(
       "seg %s attempt %d: supervisor rejected (%d issues)",
       _format_tag(seg.story_order), attempt, len(issues),
     )
 
-  # Out of attempts.
-  log.warning("seg %s quarantined after %d attempts", _format_tag(seg.story_order), MAX_ATTEMPTS_PER_SEGMENT)
+  # Out of attempts. Prefer to ship a deterministically-valid diff with a
+  # warning over leaving a hole — the user's bias is coverage with some
+  # error tolerance, not perfection with gaps. Only quarantine if NO attempt
+  # produced a deterministically-valid diff (truly unrecoverable for the
+  # applier).
+  if last_valid_diff is not None:
+    tag = _format_tag(seg.story_order)
+    msg = _commit_message(seg, last_valid_diff.get("log_entry", "")) + " [warn]"
+    result = apply_diff(wiki_dir=wiki_dir, diff=last_valid_diff, snapshot_tag=tag, commit_message=msg)
+    _store_summary_card(conn, seg.id, last_valid_diff["summary_card"])
+    warning_payload = json.dumps({
+      "supervisor_issues": last_supervisor_issues or [],
+      "note": "applied after 3 failed supervisor attempts",
+    })[:2000]
+    _mark_segment(
+      conn, seg,
+      status="applied_with_warnings",
+      attempts=seg.attempts + MAX_ATTEMPTS_PER_SEGMENT,
+      last_error=warning_payload,
+      snapshot_tag=tag,
+    )
+    log.warning(
+      "seg %s applied_with_warnings (+%d pages, ~%d updated; %d supervisor issues recorded)",
+      tag,
+      len(result.pages_created),
+      len(result.pages_updated),
+      len(last_supervisor_issues or []),
+    )
+    return result
+
+  log.warning(
+    "seg %s quarantined: no deterministically-valid diff in %d attempts",
+    _format_tag(seg.story_order), MAX_ATTEMPTS_PER_SEGMENT,
+  )
   revert_working_tree(_wiki_dir_for(conn, wiki_id))
   _mark_segment(
     conn, seg,
