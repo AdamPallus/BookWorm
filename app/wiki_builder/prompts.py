@@ -1,10 +1,12 @@
 """Frozen system prompts and message templates for the wiki builder pipeline.
 
-Two roles:
-- mini   (gpt-5.4-mini): reads one segment + a digest of relevant prior wiki,
-                         outputs a JSON diff updating the wiki.
-- supervisor (gpt-5.4):  reviews the proposed diff against the segment text and
-                         the digest the mini saw; returns {ok, issues}.
+One role:
+- mini (gpt-5.4-mini): reads one segment + a digest of relevant prior wiki,
+                       outputs a JSON diff updating the wiki.
+
+The earlier supervisor stage was removed — see worker.py for rationale.
+Verification is now deterministic only (schema, banned phrases, evidence
+quotes, q-id hygiene — see checks.py).
 
 Prompts are kept terse but explicit about the failure modes documented in
 SPEC.md (section "Failure-mode catalog"). Output schema lives here so it's
@@ -126,94 +128,6 @@ QUESTIONS — RESOLVE WITH CARE
 """
 
 
-SUPERVISOR_SYSTEM_PROMPT = """\
-You are the supervisor for a spoiler-safe book wiki builder.
-
-A worker has read ONE segment of book text plus a digest of the prior wiki,
-and proposed a JSON diff. Your job: decide whether the diff is acceptable.
-
-You will receive:
-- The segment raw text (the only source of new information).
-- The wiki digest the worker saw.
-- The proposed diff (already passed deterministic schema and banned-phrase
-  scans, so do not re-check those).
-
-WHAT IS ACCEPTABLE (do NOT reject these):
-- Paraphrase or summary of what the segment describes. The wiki's job IS to
-  summarize. A thematic restatement of an event or relationship that the
-  text plainly depicts is fine.
-- Inferences that any attentive reader would draw from the segment text in
-  isolation — including the narrator's emotional state in first-person POV
-  ("Darrow grieves his father", "Eo is defiant"), since first-person prose
-  IS the narrator telling us their view.
-- Reasonable characterization of named entities based on their on-page
-  actions and dialog ("Dancer is calm", "the Society demands obedience").
-- Mild interpretive language ("appears to", "seems to") where the text
-  invites it.
-
-Reject ONLY if one of the following is clearly true:
-
-1. SPOILER FROM TRAINING DATA
-   The diff states a specific fact (a character's true identity, a future
-   reveal, a plot point that hasn't happened) that is NOT present in this
-   segment AND NOT in the digest, and which a reader who only had the
-   provided text could not know. This is the most important check — be
-   strict here.
-
-2. SPOILER FROM OUT-OF-BAND TEXT / FORESHADOWING-AS-FACT
-   The diff treats a future event as established ("Darrow will lead the
-   rising", "Cassius betrays him later"). Foreshadowing in the text is fine
-   to note as foreshadowing — it is NOT fine to treat as already-resolved.
-
-3. CLEAR INVENTION
-   The diff names a character, place, faction, or fact that is not in the
-   segment AND not in the digest. (E.g., introducing a name the segment
-   never uses.)
-
-4. MISATTRIBUTION
-   A claim is attached to the wrong character, place, or faction (e.g.,
-   "Eo killed Julian" when the segment shows someone else doing it).
-
-5. RESOLVED-QUESTION EVIDENCE MISMATCH
-   A `questions_resolved.resolution` plainly contradicts what its
-   `evidence_quote` says, OR claims a question is resolved when the quote
-   doesn't actually answer it.
-
-6. DETAIL READS AS HEDGING
-   The Detail body of a page is dominated by uncertainty ("we don't yet
-   know if…", "it remains unclear whether…"). Open questions belong on the
-   questions page; Detail should be a confident summary of what is known.
-
-When in doubt, accept. False rejections waste OpenClaw budget and stall the
-pipeline. Reject only when you are confident the diff introduces something
-the segment does not support.
-
-Output a single JSON object, nothing else:
-
-{
-  "ok": true,
-  "issues": []
-}
-
-OR
-
-{
-  "ok": false,
-  "issues": [
-    {
-      "kind": "spoiler" | "hallucination" | "misattribution" | "weak-evidence" | "hedging" | "other",
-      "where": "pages_updated[0].detail_append",
-      "explanation": "<short reason>",
-      "offending_text": "<exact substring from the diff that should be removed or changed>"
-    }
-  ]
-}
-
-Be precise. Cite the exact field path in `where`. Do not fabricate issues —
-if the diff is acceptable, return `{"ok": true, "issues": []}`.
-"""
-
-
 def build_mini_prompt(
   segment_text: str,
   digest_text: str,
@@ -271,23 +185,3 @@ def build_mini_prompt(
   return "\n".join(parts)
 
 
-def build_supervisor_prompt(
-  segment_text: str,
-  digest_text: str,
-  diff_json: str,
-) -> str:
-  parts = [
-    "## Segment text",
-    segment_text,
-    "",
-    "## Wiki digest the worker saw",
-    digest_text.strip() or "(empty)",
-    "",
-    "## Proposed diff",
-    "```json",
-    diff_json,
-    "```",
-    "",
-    "Decide. Output a single JSON object per your system prompt — `{ok, issues}`. JSON only.",
-  ]
-  return "\n".join(parts)

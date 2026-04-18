@@ -2,23 +2,33 @@
 
 The phased rollout for the autonomous wiki builder. Read [SPEC.md](SPEC.md) first — this doc tracks *what's done and what's next*; SPEC.md is the design contract.
 
-## Status (last updated: Phase 0 complete)
+## Status (last updated: Phase 1 complete + supervisor dropped)
 
 | Phase | Status | Notes |
 |---|---|---|
 | 0. Foundation | ✅ done (commit `5cf857c`) | Spec, schema, segmenter, deterministic checks, 45 unit tests. No LLM calls. |
-| 1. End-to-end on Red Rising book 1 | 🔜 next | Builds prompts, OpenClaw client wrapper, worker loop, runs ~15-20 segments on a small book. |
-| 2. Q&A spoiler cutoff | pending | Replace chapter-based cutoff with segment-based one. |
+| 1. End-to-end on Red Rising book 1 | ✅ done | Worker, prompts, OpenClaw client, applier, init/build CLIs. Full 50-segment run completed: 41 applied, 7 with-warnings, 2 quarantined. **Supervisor stage dropped** — see below. |
+| 2. Q&A spoiler cutoff | 🔜 next | Replace chapter-based cutoff with segment-based one. |
 | 3. Malazan omnibus | pending | Use virtual_chapters to slice 9.epub into per-novel chapters. |
 | 4. Multi-EPUB series | pending | Wire `wiki_books` table for series spanning multiple book IDs. |
+
+### Phase 1 retrospective: supervisor dropped
+
+The original design had a gpt-5.4 supervisor reviewing each gpt-5.4-mini diff. It was removed mid-Phase-1 because:
+
+- The supervisor received the same raw segment text + digest as mini, plus the diff JSON. Cost was ~2.5× per segment versus mini-only — bigger model running on a bigger prompt.
+- Across 50 segments on Red Rising book 1, supervisor influenced **zero** outcomes: every quarantine was triggered by deterministic checks (mini failing schema/banned-phrase/evidence rules); every with-warnings segment was a supervisor objection we shipped anyway.
+- User feedback: "If you're using a mini agent to save tokens, sending the exact same text to a more expensive agent makes that step entirely redundant."
+
+Verification is now deterministic-only. If LLM-grade hallucinations show up in practice, reintroduce a much cheaper checker that sees only the diff plus relevant excerpts (not the whole segment), and only on suspicious diffs (e.g., many new pages).
 
 ## Key decisions already made (do not re-debate without cause)
 
 - **Snapshot-per-segment, not living-wiki-with-source-tracking.** Safer; easier to "roll back" the wiki for a reader at story_order N. The user explicitly confirmed they want snapshots ("I can select from the dropdown to see the state of the wiki for whatever chapter I want").
-- **Always gpt-5.4 for supervisor (no Opus retries in v1).** User: "Let's just have always 5.4 via openclaw for right now."
+- **No supervisor stage** (see Phase 1 retrospective above). Deterministic checks only.
 - **Wikis live in `data/wikis/{slug}/`** — keep current location. User confirmed.
 - **Defer the "request page expansion" tool for mini.** "The wiki doesn't need to be perfect since we are pulling raw text for summaries anyway."
-- **Mini gets a fresh OpenClaw session per segment.** Continuity flows through (a) the wiki digest and (b) the previous segment's structured summary card. Within one segment, retries reuse the same session so mini sees its prior attempt + the supervisor's critique.
+- **Mini gets a fresh OpenClaw session per segment.** Continuity flows through (a) the wiki digest and (b) the previous segment's structured summary card. Within one segment, retries reuse the same session so mini sees its prior attempt + the deterministic-issue list.
 - **Paced worker.** `--segment-interval-seconds` default 90 to respect the user's OpenClaw monthly subscription budget (allotment is per-5-hour-window + weekly limit, not per-token).
 - **Test target: Red Rising book 1 (5.epub).** Discard existing `data/wikis/red-rising/` (49 chapter-tagged snapshots from the manual pipeline). Archive as `data/wikis/red-rising.legacy/` before starting Phase 1.
 

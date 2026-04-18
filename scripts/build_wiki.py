@@ -4,8 +4,7 @@ Usage:
   python -m scripts.build_wiki --wiki-slug red-rising-v2 \
     [--segment-interval-seconds 90] \
     [--max-segments 3] \
-    [--mini-model gpt-5.4-mini] \
-    [--supervisor-model gpt-5.4]
+    [--mini-model gpt-5.4-mini]
 
 The worker resumes from the next pending segment (story_order ASC). Quarantined
 segments are skipped on the next run unless their status is reset manually.
@@ -41,7 +40,6 @@ def main() -> None:
   parser.add_argument("--segment-interval-seconds", type=float, default=90.0)
   parser.add_argument("--max-segments", type=int, default=None)
   parser.add_argument("--mini-model", default=openclaw_client.DEFAULT_MINI_MODEL)
-  parser.add_argument("--supervisor-model", default=openclaw_client.DEFAULT_SUPERVISOR_MODEL)
   parser.add_argument("--read-timeout-seconds", type=float, default=600.0)
   parser.add_argument("--verbose", action="store_true")
   args = parser.parse_args()
@@ -58,7 +56,6 @@ def main() -> None:
     segment_interval_seconds=args.segment_interval_seconds,
     max_segments=args.max_segments,
     mini_model=args.mini_model,
-    supervisor_model=args.supervisor_model,
     read_timeout_seconds=args.read_timeout_seconds,
   )
   processed = run_worker(conn, wiki_id, config)

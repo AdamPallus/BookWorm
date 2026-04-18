@@ -4,12 +4,20 @@ For each pending segment in story_order:
   1. Reconstruct segment text from `chunks` table.
   2. Build digest from the wiki working tree + previous summary card.
   3. Open a fresh OpenClaw session for the mini.
-  4. Up to 3 attempts: send mini prompt, parse JSON, run deterministic checks,
-     run supervisor. Retry within the same mini session with issue list.
-  5. On supervisor pass: apply diff, commit, tag, store summary card,
+  4. Up to 3 attempts: send mini prompt, parse JSON, run deterministic checks.
+     Retry within the same mini session with the issue list.
+  5. On pass: apply diff, commit, tag, store summary card,
      update wiki_segments row.
   6. On 3-strikes failure: revert working tree, mark segment quarantined.
   7. Sleep --segment-interval-seconds between segments.
+
+There is no supervisor stage. The deterministic checks (schema, banned
+phrases, evidence-quote substring, q-id hygiene) are the only verification.
+The earlier supervisor design sent the same raw segment text to a more
+expensive model and added zero outcome value across a 50-segment run, so it
+was removed. If a real signal of LLM-grade hallucination shows up in
+practice, reintroduce a much cheaper checker that sees only the diff plus
+relevant excerpts — not the whole segment.
 """
 
 from __future__ import annotations
@@ -27,12 +35,7 @@ from . import openclaw_client
 from .applier import ApplyResult, apply_diff, revert_working_tree
 from .checks import run_all_checks
 from .digest import build_digest, load_all_question_ids, load_open_questions_active_ids
-from .prompts import (
-  MINI_SYSTEM_PROMPT,
-  SUPERVISOR_SYSTEM_PROMPT,
-  build_mini_prompt,
-  build_supervisor_prompt,
-)
+from .prompts import MINI_SYSTEM_PROMPT, build_mini_prompt
 
 log = logging.getLogger("wiki_builder.worker")
 
@@ -44,7 +47,6 @@ class WorkerConfig:
   segment_interval_seconds: float = 90.0
   max_segments: Optional[int] = None
   mini_model: str = openclaw_client.DEFAULT_MINI_MODEL
-  supervisor_model: str = openclaw_client.DEFAULT_SUPERVISOR_MODEL
   read_timeout_seconds: float = 600.0
 
 
@@ -203,13 +205,6 @@ def process_segment(
   mini_session = openclaw_client.new_session_id(label=f"mini-seg-{seg.story_order:04d}")
   prior_issues: Optional[list] = None
   prior_diff_str: Optional[str] = None
-  # Track the most recent diff that passed deterministic checks. If we run
-  # out of attempts but have one of these, we apply it with a warning rather
-  # than leave a hole in the wiki history. Hard requirements (schema, banned
-  # phrases, evidence quotes, q-id hygiene) are enforced deterministically;
-  # the supervisor is a best-effort second opinion.
-  last_valid_diff: Optional[dict] = None
-  last_supervisor_issues: Optional[list] = None
 
   for attempt in range(1, MAX_ATTEMPTS_PER_SEGMENT + 1):
     log.info("seg %s attempt %d", _format_tag(seg.story_order), attempt)
@@ -277,111 +272,30 @@ def process_segment(
       )
       continue
 
-    # This diff passes hard requirements. Remember it as a fallback even if
-    # the supervisor later rejects it.
-    last_valid_diff = diff
-
-    sup_input = SUPERVISOR_SYSTEM_PROMPT + "\n\n" + build_supervisor_prompt(
-      segment_text=segment_text,
-      digest_text=digest.text,
-      diff_json=prior_diff_str,
-    )
-    sup_session = openclaw_client.new_session_id(label=f"sup-seg-{seg.story_order:04d}-att-{attempt}")
-    try:
-      sup_response = openclaw_client.call_json(
-        sup_input,
-        model=config.supervisor_model,
-        session_id=sup_session,
-        read_timeout=config.read_timeout_seconds,
-      )
-    except openclaw_client.OpenClawError as e:
-      log.error("openclaw supervisor call failed: %s", e)
-      _mark_segment(
-        conn, seg, status="pending",
-        attempts=seg.attempts + attempt,
-        last_error=f"openclaw supervisor error: {e}",
-        snapshot_tag=None,
-      )
-      return None
-
-    if sup_response.parsed is None:
-      log.warning(
-        "supervisor output not valid JSON (attempt %d); raw: %s",
-        attempt,
-        sup_response.raw_text[:400],
-      )
-      prior_issues = [{
-        "kind": "supervisor-parse",
-        "where": "<top>",
-        "explanation": "supervisor returned non-JSON; treating as a generic 'be more careful' signal",
-      }]
-      continue
-
-    sup = sup_response.parsed
-    if sup.get("ok") is True:
-      tag = _format_tag(seg.story_order)
-      msg = _commit_message(seg, diff.get("log_entry", ""))
-      result = apply_diff(wiki_dir=wiki_dir, diff=diff, snapshot_tag=tag, commit_message=msg)
-      _store_summary_card(conn, seg.id, diff["summary_card"])
-      _mark_segment(
-        conn, seg,
-        status="applied",
-        attempts=seg.attempts + attempt,
-        last_error=None,
-        snapshot_tag=tag,
-      )
-      log.info(
-        "seg %s applied: +%d pages, ~%d updated, %d Q+/%d Q-",
-        tag,
-        len(result.pages_created),
-        len(result.pages_updated),
-        len(result.questions_added),
-        len(result.questions_resolved),
-      )
-      return result
-
-    issues = sup.get("issues") or []
-    if not issues:
-      issues = [{"kind": "other", "where": "<top>", "explanation": "supervisor said not ok but gave no issues"}]
-    prior_issues = _format_issues(issues)
-    last_supervisor_issues = prior_issues
-    log.info(
-      "seg %s attempt %d: supervisor rejected (%d issues)",
-      _format_tag(seg.story_order), attempt, len(issues),
-    )
-
-  # Out of attempts. Prefer to ship a deterministically-valid diff with a
-  # warning over leaving a hole — the user's bias is coverage with some
-  # error tolerance, not perfection with gaps. Only quarantine if NO attempt
-  # produced a deterministically-valid diff (truly unrecoverable for the
-  # applier).
-  if last_valid_diff is not None:
     tag = _format_tag(seg.story_order)
-    msg = _commit_message(seg, last_valid_diff.get("log_entry", "")) + " [warn]"
-    result = apply_diff(wiki_dir=wiki_dir, diff=last_valid_diff, snapshot_tag=tag, commit_message=msg)
-    _store_summary_card(conn, seg.id, last_valid_diff["summary_card"])
-    warning_payload = json.dumps({
-      "supervisor_issues": last_supervisor_issues or [],
-      "note": "applied after 3 failed supervisor attempts",
-    })[:2000]
+    msg = _commit_message(seg, diff.get("log_entry", ""))
+    result = apply_diff(wiki_dir=wiki_dir, diff=diff, snapshot_tag=tag, commit_message=msg)
+    _store_summary_card(conn, seg.id, diff["summary_card"])
     _mark_segment(
       conn, seg,
-      status="applied_with_warnings",
-      attempts=seg.attempts + MAX_ATTEMPTS_PER_SEGMENT,
-      last_error=warning_payload,
+      status="applied",
+      attempts=seg.attempts + attempt,
+      last_error=None,
       snapshot_tag=tag,
     )
-    log.warning(
-      "seg %s applied_with_warnings (+%d pages, ~%d updated; %d supervisor issues recorded)",
+    log.info(
+      "seg %s applied: +%d pages, ~%d updated, %d Q+/%d Q-",
       tag,
       len(result.pages_created),
       len(result.pages_updated),
-      len(last_supervisor_issues or []),
+      len(result.questions_added),
+      len(result.questions_resolved),
     )
     return result
 
+  # Out of attempts. Quarantine: revert any partial changes and mark segment.
   log.warning(
-    "seg %s quarantined: no deterministically-valid diff in %d attempts",
+    "seg %s quarantined: %d attempts failed deterministic checks",
     _format_tag(seg.story_order), MAX_ATTEMPTS_PER_SEGMENT,
   )
   revert_working_tree(_wiki_dir_for(conn, wiki_id))

@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """
-Generate a static HTML viewer with chapter-state toggle for a Bookworm wiki.
+Generate a static HTML viewer for a Bookworm wiki — one snapshot per tag.
 
 Usage:
     python wiki_viewer_multi.py <wiki-repo-dir> --output viewer.html
 
-Unlike wiki_viewer.py (single tag), this embeds ALL chapter snapshots
-into one HTML file with a chapter selector dropdown. The user can toggle
-between chapter states and see how the wiki grows over time.
+Recognised tag formats:
+- ``seg-NNNN``           — current segment-based pipeline (one tag per segment)
+- ``ch-NN`` / ``b{N}-ch-NN`` — legacy chapter-based pipeline
 
-The viewer also shows a diff summary when switching chapters — highlighting
-which pages are new or updated.
+Embeds every snapshot into a single static HTML file with a checkpoint
+selector dropdown. Labels in the dropdown are bare tag names — no commit
+message is shown, since commit messages summarise what just happened in the
+text and would spoil the reader.
+
+A diff summary highlights which pages are new or updated when you switch
+checkpoints.
 """
 
 import argparse
@@ -28,19 +33,33 @@ def run_git(args: list[str], cwd: str) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def get_chapter_tags(cwd: str) -> list[str]:
+SEG_TAG_RE = re.compile(r"^seg-(\d+)$")
+CHAPTER_TAG_RE = re.compile(r"^(?:b(\d+)-)?ch-(\d+)$")
+
+
+def get_snapshot_tags(cwd: str) -> list[str]:
+    """Return all wiki snapshot tags (segment- or chapter-based) sorted in
+    story order. Segment tags sort by their numeric suffix; chapter tags by
+    (book, chapter). If both styles are present, segments come first."""
     raw = run_git(["tag", "-l"], cwd)
     if not raw:
         return []
-    tags = [t for t in raw.split("\n") if re.match(r"(b\d+-)?ch-\d+", t)]
 
-    def sort_key(tag):
-        parts = re.match(r"(?:b(\d+)-)?ch-(\d+)", tag)
-        if parts:
-            return (int(parts.group(1) or 0), int(parts.group(2)))
-        return (0, 0)
+    def sort_key(tag: str):
+        m = SEG_TAG_RE.match(tag)
+        if m:
+            return (0, 0, int(m.group(1)))
+        m = CHAPTER_TAG_RE.match(tag)
+        if m:
+            return (1, int(m.group(1) or 0), int(m.group(2)))
+        return (2, 0, 0)
 
+    tags = [t for t in raw.split("\n") if SEG_TAG_RE.match(t) or CHAPTER_TAG_RE.match(t)]
     return sorted(tags, key=sort_key)
+
+
+# Back-compat alias for any external caller.
+get_chapter_tags = get_snapshot_tags
 
 
 def get_wiki_files_at_tag(tag: str, cwd: str) -> dict[str, str]:
@@ -215,13 +234,13 @@ def build_snapshot_data(pages: dict[str, str]) -> dict:
 
 
 def generate_multi_html(repo_dir: str, book_title: str = "Bookworm Wiki") -> str:
-    """Generate HTML with all chapter snapshots embedded."""
-    tags = get_chapter_tags(repo_dir)
+    """Generate HTML with every snapshot embedded."""
+    tags = get_snapshot_tags(repo_dir)
     if not tags:
-        print("No chapter tags found.", file=sys.stderr)
+        print("No snapshot tags found (looked for seg-NNNN and ch-NN).", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Processing {len(tags)} chapter tags for '{book_title}'...")
+    print(f"Processing {len(tags)} snapshot tags for '{book_title}'...")
 
     all_snapshots = {}
     tag_metadata = []
@@ -231,14 +250,15 @@ def generate_multi_html(repo_dir: str, book_title: str = "Bookworm Wiki") -> str
         snapshot = build_snapshot_data(pages)
         all_snapshots[tag] = snapshot
 
-        commit_msg = get_commit_message(tag, repo_dir)
         page_count = len(snapshot)
         char_count = sum(1 for p in snapshot.values() if p["category"] == "characters")
         concept_count = sum(1 for p in snapshot.values() if p["category"] == "concepts")
 
+        # Label is the bare tag — commit messages summarise what just
+        # happened in the text and would spoil the reader.
         tag_metadata.append({
             "tag": tag,
-            "label": f"{tag}: {commit_msg}" if commit_msg else tag,
+            "label": tag,
             "pages": page_count,
             "chars": char_count,
             "concepts": concept_count,
@@ -565,7 +585,7 @@ body {{
 <div class="main">
   <div class="content-area" id="content">
     <div class="welcome">
-      <h2>Select a chapter checkpoint</h2>
+      <h2>Select a checkpoint</h2>
       <p>Use the dropdown above to choose how far you've read.</p>
     </div>
   </div>

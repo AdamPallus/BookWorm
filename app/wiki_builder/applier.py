@@ -1,8 +1,8 @@
 """Apply a validated diff to the wiki working tree, git-commit, and tag.
 
 The applier is purely deterministic: by the time it runs, the diff has passed
-the deterministic checks AND the LLM supervisor. It does file I/O and runs
-git commands; no logic decisions.
+the deterministic checks (schema, banned phrases, evidence quotes, q-id
+hygiene). It does file I/O and runs git commands; no logic decisions.
 
 Page format (kept simple — readable without templating):
 

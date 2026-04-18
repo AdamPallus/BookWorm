@@ -25,7 +25,6 @@ OPENCLAW_BACKEND_PREFIX = "openai-codex/"
 ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
 
 DEFAULT_MINI_MODEL = "gpt-5.4-mini"
-DEFAULT_SUPERVISOR_MODEL = "gpt-5.4"
 
 JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
