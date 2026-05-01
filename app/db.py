@@ -148,6 +148,8 @@ CREATE TABLE IF NOT EXISTS wikis (
   min_segment_tokens INTEGER NOT NULL DEFAULT 3000,
   max_segment_tokens INTEGER NOT NULL DEFAULT 12000,
   status TEXT NOT NULL DEFAULT 'active',
+  openclaw_session_id TEXT,
+  openclaw_session_total_tokens INTEGER,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -176,8 +178,9 @@ CREATE TABLE IF NOT EXISTS wiki_segments (
   last_error TEXT,
   applied_at TEXT,
   snapshot_tag TEXT,
+  session_total_tokens INTEGER,
   UNIQUE (wiki_id, story_order),
-  UNIQUE (book_id, chapter_index, segment_in_chapter)
+  UNIQUE (wiki_id, book_id, chapter_index, segment_in_chapter)
 );
 
 CREATE INDEX IF NOT EXISTS idx_wiki_segments_status
@@ -335,6 +338,77 @@ def _migrate(conn: sqlite3.Connection):
   _ensure_column(conn, "virtual_chapter_settings", "updated_at", "TEXT")
   _ensure_column(conn, "virtual_chapter_settings", "detection_mode", "TEXT NOT NULL DEFAULT 'strict'")
   _ensure_column(conn, "virtual_chapter_settings", "toc_display_mode", "TEXT NOT NULL DEFAULT 'merged'")
+
+  # Persist the OpenClaw session id per wiki so that multiple worker runs
+  # against the same wiki resume the same agent session (preserving the
+  # in-context history of prior segments).
+  _ensure_column(conn, "wikis", "openclaw_session_id", "TEXT")
+
+  # Track the current session's cumulative context size (total_tokens
+  # reported on the last successful response.completed event). Used to
+  # trigger compaction when it crosses the threshold.
+  _ensure_column(conn, "wikis", "openclaw_session_total_tokens", "INTEGER")
+
+  # Per-segment snapshot of session_total_tokens at successful apply — the
+  # data behind the dashboard's session-size curve.
+  _ensure_column(conn, "wiki_segments", "session_total_tokens", "INTEGER")
+
+  # Per-wiki override of the OpenClaw session compaction threshold. When the
+  # session's cumulative total_tokens crosses this, the worker rotates to a
+  # fresh session (with a recent-segments prelude) before the next segment.
+  # NULL means "use the worker's built-in default" (currently 240k). Adjust
+  # per-wiki when you change the OpenClaw context-window setting or move
+  # between models with different effective limits.
+  _ensure_column(conn, "wikis", "compact_at_total_tokens", "INTEGER")
+
+  # Which wiki a book's Q&A pulls context from. NULL means "no wiki selected
+  # for this book" — Q&A falls back to the legacy filesystem-discovered wiki
+  # if any, or runs with no wiki context otherwise. The candidate list comes
+  # from wiki_books (wikis linked to the book).
+  _ensure_column(conn, "books", "selected_wiki_id", "INTEGER")
+
+  # Migrate wiki_segments UNIQUE constraint to include wiki_id so multiple wikis
+  # can segment the same book (e.g. red-rising-v2 alongside red-rising-v3).
+  ws_sql_row = conn.execute(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='wiki_segments'"
+  ).fetchone()
+  if ws_sql_row and "UNIQUE (wiki_id, book_id, chapter_index, segment_in_chapter)" not in (ws_sql_row["sql"] or ""):
+    conn.executescript(
+      """
+      ALTER TABLE wiki_segments RENAME TO wiki_segments_old;
+      CREATE TABLE wiki_segments (
+        id INTEGER PRIMARY KEY,
+        wiki_id INTEGER NOT NULL,
+        book_id INTEGER NOT NULL,
+        chapter_index INTEGER NOT NULL,
+        segment_in_chapter INTEGER NOT NULL,
+        story_order INTEGER NOT NULL,
+        start_char INTEGER NOT NULL,
+        end_char INTEGER NOT NULL,
+        start_position_index INTEGER,
+        end_position_index INTEGER,
+        token_count INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        applied_at TEXT,
+        snapshot_tag TEXT,
+        UNIQUE (wiki_id, story_order),
+        UNIQUE (wiki_id, book_id, chapter_index, segment_in_chapter)
+      );
+      INSERT INTO wiki_segments
+        (id, wiki_id, book_id, chapter_index, segment_in_chapter, story_order,
+         start_char, end_char, start_position_index, end_position_index,
+         token_count, status, attempts, last_error, applied_at, snapshot_tag)
+      SELECT id, wiki_id, book_id, chapter_index, segment_in_chapter, story_order,
+             start_char, end_char, start_position_index, end_position_index,
+             token_count, status, attempts, last_error, applied_at, snapshot_tag
+      FROM wiki_segments_old;
+      DROP TABLE wiki_segments_old;
+      CREATE INDEX IF NOT EXISTS idx_wiki_segments_status
+        ON wiki_segments(wiki_id, status, story_order);
+      """
+    )
 
   # Ensure bookmark storage exists for per-book saved reading points.
   conn.execute(

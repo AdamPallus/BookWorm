@@ -1,187 +1,186 @@
-"""Frozen system prompts and message templates for the wiki builder pipeline.
+"""Message templates the harness sends to the Bookworm OpenClaw agent.
 
-One role:
-- mini (gpt-5.4-mini): reads one segment + a digest of relevant prior wiki,
-                       outputs a JSON diff updating the wiki.
+The Bookworm agent itself is task-agnostic — its own AGENTS.md / TOOLS.md
+inside the OpenClaw install just establish identity and working style. The
+task-specific brief (how to build a book wiki, what a good page looks like)
+is injected by this harness on the first message of each new agent session,
+so the instructions sit in the conversation as a recent authoritative user
+message instead of drifting into background system-prompt territory.
 
-The earlier supervisor stage was removed — see worker.py for rationale.
-Verification is now deterministic only (schema, banned phrases, evidence
-quotes, q-id hygiene — see checks.py).
+Per-turn messages come in three shapes:
 
-Prompts are kept terse but explicit about the failure modes documented in
-SPEC.md (section "Failure-mode catalog"). Output schema lives here so it's
-adjacent to the prompt text — keep them in sync.
+- Session opener: full wiki-builder instructions + the reference example
+  page, followed by the segment. Used on the first segment of a fresh
+  session, and on the first segment after a context-compaction rotation.
+- Ordinary segment turn: slug + segment text + short reminder checklist.
+- Rejection turn: sent after deterministic checks fail on a segment.
 """
 
 from __future__ import annotations
 
-from typing import Optional
+from pathlib import Path
+from typing import Iterable, Optional
 
-MINI_SYSTEM_PROMPT = """\
-You are the wiki-update worker for a spoiler-safe book companion.
-
-You will receive ONE segment of book text plus a digest of the wiki as it
-stands at the end of the previous segment. Your job: output a JSON diff that
-updates the wiki to reflect what this segment reveals.
-
-HARD RULES — violations cause your output to be rejected:
-
-1. SOURCES YOU MAY USE
-   - The segment text (provided below).
-   - The wiki digest (provided below).
-   - The previous segment's summary card (if provided).
-   That is all. You MUST NOT use any background knowledge of this book or
-   series from your training data, even if you recognize it.
-
-2. NO TIME QUALIFIERS IN PROSE
-   Wiki pages are snapshot-versioned externally. Inside the prose, never
-   write phrases like:
-     "as of chapter X", "currently as of", "(ch. N)", "ch. N",
-     "later revealed", "will eventually", "in the next chapter",
-     "eventually becomes", "later shown".
-   Write each page as confident present-tense narrative reflecting what is
-   known right now.
-
-3. NO INVENTED FACTS
-   Every claim in a created or updated page must be grounded in (a) the
-   segment text or (b) an existing wiki page in the digest. Do not infer
-   details that aren't stated. Hedging belongs in the open-questions list,
-   not in Detail prose.
-
-4. OPEN QUESTIONS
-   - Scan the open-questions Active list (in the digest). For any question
-     that this segment answers, include it in `questions_resolved` with a
-     verbatim `evidence_quote` from the segment text (12-320 characters).
-   - Add new questions only when the segment raises a clear unresolved
-     thread. Use IDs of the form q-NNNN that do not already exist in the
-     wiki.
-
-5. PAGE PATHS
-   All paths must match `^(characters|concepts|places|factions|events)/[a-z0-9][a-z0-9-]*\\.md$`.
-   Lowercase, hyphenated slugs only. Do not invent other directories.
-
-6. SOURCE NOTES
-   Every entry in `pages_created` and `pages_updated` must include a non-empty
-   `source_note` of at most 140 characters describing what THIS segment
-   contributed to that page. The worker writes the actual `## Sources` block;
-   you only provide the description.
-
-7. OUTPUT FORMAT
-   Output a single JSON object — nothing else. No prose preamble, no markdown
-   fence. The schema is:
-
-   {
-     "summary_card": {
-       "key_events": ["string", ...],         // 1-5 short bullets, required, non-empty
-       "active_characters": ["page_path", ...],
-       "new_facts": ["string", ...],
-       "questions_added": ["q-NNNN", ...],
-       "questions_resolved": ["q-NNNN", ...]
-     },
-     "pages_created": [
-       {
-         "path": "characters/some-name.md",
-         "title": "Some Name",
-         "summary": "1-3 sentences",
-         "detail": "multi-paragraph markdown",
-         "source_note": "<=140 chars"
-       }
-     ],
-     "pages_updated": [
-       {
-         "path": "characters/existing.md",
-         "summary": "new full summary OR null to keep current",
-         "detail_append": "markdown to append OR null",
-         "detail_replace": "full new detail markdown OR null",
-         "source_note": "<=140 chars"
-       }
-     ],
-     "questions_added": [
-       { "id": "q-NNNN", "title": "short title", "text": "the question" }
-     ],
-     "questions_resolved": [
-       { "id": "q-NNNN", "resolution": "<=200 chars", "evidence_quote": "verbatim substring of the segment, 12-320 chars" }
-     ],
-     "log_entry": "1-3 sentences for log.md describing what changed (REQUIRED, non-empty, at least 10 chars)"
-   }
-
-   For `pages_updated`, exactly one of `detail_append` / `detail_replace`
-   may be non-null (or both null if only the summary changes).
-
-   Use empty arrays — not omitted keys — when there's nothing to add.
-   `summary_card.key_events` MUST contain at least one item.
-   `log_entry` MUST be a non-empty string (10+ chars). If the segment is
-   short or quiet, write something like "Quiet transitional scene; no new
-   characters or facts." — never leave it empty.
-
-QUESTIONS — RESOLVE WITH CARE
-   Only add an entry to `questions_resolved` when ONE evidence_quote from
-   THIS segment fully answers the question on its own. If a question has
-   multiple parts and the segment only answers one part, leave it Active.
-   Never bundle two unrelated facts into one resolution. If your evidence
-   quote does not by itself prove the resolution, drop the entry — it is
-   better to leave a question open than to claim a weak resolution.
-
-8. RETRIES
-   If your previous attempt was rejected, you will receive a list of issues.
-   Fix exactly those issues and resubmit. Do not change unrelated content.
-"""
+_THIS_DIR = Path(__file__).resolve().parent
+_INSTRUCTIONS_PATH = _THIS_DIR / "wiki_builder_instructions.md"
+_EXAMPLE_PATH = _THIS_DIR / "bookworm-wiki-creator.example.md"
 
 
-def build_mini_prompt(
+def _load(path: Path) -> str:
+  return path.read_text(encoding="utf-8")
+
+
+# Loaded lazily so import-time failures in tests don't cascade. Callers go
+# through the helper below.
+_cache: dict[str, str] = {}
+
+
+def _get(name: str, path: Path) -> str:
+  if name not in _cache:
+    _cache[name] = _load(path)
+  return _cache[name]
+
+
+def _opener_block() -> str:
+  instructions = _get("instructions", _INSTRUCTIONS_PATH)
+  example = _get("example", _EXAMPLE_PATH)
+  return (
+    "This is the first message in a new agent session. Read this whole brief\n"
+    "before you touch any files — it is the authoritative description of the\n"
+    "job. Subsequent turns in this session will be short operational messages\n"
+    "(the next segment, or a rejection list); they assume you have read this.\n"
+    "\n"
+    "===== WIKI-BUILDER TASK BRIEF =====\n"
+    f"{instructions}\n"
+    "===== END TASK BRIEF =====\n"
+    "\n"
+    "===== EXAMPLE REFERENCE PAGE =====\n"
+    f"{example}\n"
+    "===== END EXAMPLE =====\n"
+    "\n"
+  )
+
+
+def build_segment_message(
+  *,
+  wiki_slug: str,
+  wiki_dir: str,
+  snapshot_tag: str,
+  chapter_label: str,
   segment_text: str,
-  digest_text: str,
-  previous_summary_card: Optional[dict],
-  prior_attempt_issues: Optional[list] = None,
-  prior_attempt_diff: Optional[str] = None,
+  prelude_text: Optional[str] = None,
+  compaction_context: Optional[str] = None,
+  is_session_opener: bool = False,
+  new_book_label: Optional[str] = None,
 ) -> str:
-  """Assemble the mini's input. Used both for first attempt and retries
-  within the same OpenClaw session.
+  opener_block = _opener_block() if is_session_opener else ""
 
-  On retry: includes the prior attempt's diff and the issue list so the model
-  can correct in place. The OpenClaw session also retains its own context, so
-  this is belt-and-suspenders."""
-  parts: list = []
+  compaction_block = ""
+  if new_book_label and is_session_opener:
+    # First segment of a new book in a multi-book / series wiki. The wiki
+    # already contains everything known from prior books; the agent's job
+    # now is to extend it with this new book's events.
+    compaction_block = (
+      f"This is the first segment of {new_book_label}. The wiki working\n"
+      "tree already contains pages built from earlier books in the series.\n"
+      "Those pages are authoritative for everything known through the end\n"
+      "of the prior book — treat them as your starting state. Read them as\n"
+      "you normally would (Glob / Grep / Read) before deciding what to add\n"
+      "or change.\n"
+      "\n"
+      "Integrate the new segment below as if continuing reading: characters\n"
+      "from earlier books may reappear (extend their pages with new\n"
+      "developments), and new characters / places / concepts introduced in\n"
+      "this book get fresh pages. Don't rewrite the prior books' material;\n"
+      "extend it.\n\n"
+    )
+  elif compaction_context:
+    # On a rotated session we always combine the opener block with a
+    # compaction-context block: the instructions above establish ground
+    # rules, and this block reminds the agent that the wiki already
+    # contains work from prior turns.
+    compaction_block = (
+      "The previous session was compacted after growing past its context\n"
+      "budget. The existing wiki files on disk are the continuing source of\n"
+      "truth; read them as you normally would. Below is the book text from\n"
+      "the last few segments, already integrated into the wiki, included\n"
+      "only so you have recent narrative context in mind. Do NOT re-integrate\n"
+      "it as if it were new — only integrate the NEW SEGMENT text further down.\n"
+      "\n"
+      "===== RECENT BOOK TEXT (already integrated — for your reference) =====\n"
+      f"{compaction_context}\n"
+      "===== END RECENT BOOK TEXT =====\n\n"
+    )
+  elif is_session_opener:
+    # Fresh session, no prior work — no compaction block, but a short
+    # orienting note is helpful since the wiki directory may already exist
+    # with content from earlier runs, or may be empty.
+    compaction_block = (
+      "If the wiki working tree already contains pages from prior runs,\n"
+      "treat them as the continuing source of truth and integrate into them.\n"
+      "If the tree is empty, you are starting the wiki from scratch with\n"
+      "this segment.\n\n"
+    )
 
-  if previous_summary_card is not None:
-    import json
-    parts.append("## Previous segment summary card")
-    parts.append("```json")
-    parts.append(json.dumps(previous_summary_card, indent=2))
-    parts.append("```")
-    parts.append("")
+  prelude_block = ""
+  if prelude_text:
+    prelude_block = (
+      "Note: the segment below also includes earlier short text that was\n"
+      "below the threshold for its own turn (dedication, copyright, very\n"
+      "short chapter, etc.). Treat the prelude as part of the same turn —\n"
+      "absorb anything useful into the wiki, ignore boilerplate.\n"
+      "\n"
+      "===== PRELUDE TEXT =====\n"
+      f"{prelude_text}\n"
+      "===== END PRELUDE =====\n\n"
+    )
 
-  parts.append("## Wiki digest (prior wiki state, your only background)")
-  parts.append(digest_text.strip() or "(empty wiki — this is the first segment)")
-  parts.append("")
-  parts.append("## Segment text (the only new information)")
-  parts.append(segment_text)
-  parts.append("")
+  return (
+    f"{opener_block}"
+    f"Wiki slug: {wiki_slug}\n"
+    f"Wiki working tree: {wiki_dir}\n"
+    f"Segment: {snapshot_tag} ({chapter_label})\n\n"
+    f"{compaction_block}"
+    f"{prelude_block}"
+    f"===== SEGMENT TEXT =====\n"
+    f"{segment_text}\n"
+    f"===== END SEGMENT =====\n\n"
+    f"Update the wiki to reflect everything known through this segment. "
+    f"Investigate existing pages first, then write/rewrite/rename/delete as needed.\n\n"
+    f"Before you hand back:\n"
+    f"- On every page you edited, re-read it end-to-end. The first mention "
+    f"of any subject with its own page MUST be a markdown link. This is the "
+    f"single most common thing to miss on long pages, especially in later "
+    f"sections that were added after the page got long. A page with rich "
+    f"prose but no links to known subjects is wrong even if every fact is "
+    f"right.\n"
+    f"- Don't wrap a name in link syntax unless the target file actually "
+    f"exists. If a subject deserves a link but has no page yet, either "
+    f"create the page or leave the name as plain text — never point a link "
+    f"at an unrelated file.\n"
+    f"- In open-questions.md, keep exactly one \"Recently resolved\" "
+    f"section. If prior turns left duplicate sections, merge them into "
+    f"one rolling window and prune entries that have been fully absorbed "
+    f"into the body pages.\n\n"
+    f"Reply briefly when done."
+  )
 
-  if prior_attempt_issues:
-    parts.append("## YOUR PREVIOUS ATTEMPT WAS REJECTED")
-    parts.append("Issues to fix:")
-    for issue in prior_attempt_issues:
+
+def build_rejection_message(issues: Iterable) -> str:
+  lines = [
+    "Your edits were rejected by the deterministic checks. The working tree",
+    "has been reverted to the last accepted state. Try again, addressing:",
+    "",
+  ]
+  for issue in issues:
+    kind = getattr(issue, "kind", None)
+    where = getattr(issue, "where", None)
+    detail = getattr(issue, "detail", None)
+    if kind is None and isinstance(issue, dict):
       kind = issue.get("kind", "?")
       where = issue.get("where", "?")
-      detail = issue.get("explanation") or issue.get("detail") or ""
-      offending = issue.get("offending_text") or ""
-      line = f"- [{kind}] at {where}: {detail}"
-      if offending:
-        line += f"  Offending text: {offending!r}"
-      parts.append(line)
-    if prior_attempt_diff:
-      parts.append("")
-      parts.append("Your previous diff (verbatim, fix in place):")
-      parts.append("```json")
-      parts.append(prior_attempt_diff)
-      parts.append("```")
-    parts.append("")
-    parts.append("Output a corrected JSON diff. Same schema. Fix only the issues above.")
-  else:
-    parts.append("## Task")
-    parts.append("Produce the JSON diff per the schema in your system prompt. Output JSON only.")
-
-  return "\n".join(parts)
-
-
+      detail = issue.get("detail", "")
+    lines.append(f"- [{kind}] {where}: {detail}")
+  lines.append("")
+  lines.append("Re-read whatever files you need; the tree is back to its prior state.")
+  return "\n".join(lines)

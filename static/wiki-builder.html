@@ -1,0 +1,1047 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Bookworm — Wiki Builder</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #f6f5f0;
+      --panel: #fff;
+      --text: #1f1d1a;
+      --muted: #6b6862;
+      --accent: #4b6ea2;
+      --accent-strong: #2d4d7e;
+      --border: #d8d4cb;
+      --soft: #ede9df;
+      --green: #2c7a4f;
+      --amber: #b3781f;
+      --red: #b3382c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    header {
+      padding: 12px 22px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: baseline;
+      gap: 14px;
+    }
+    header h1 { margin: 0; font-size: 17px; font-weight: 600; }
+    header .sub { color: var(--muted); font-size: 12px; }
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 18px 22px 60px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+    @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .panel h2 {
+      margin: 0;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: var(--soft);
+      border-bottom: 1px solid var(--border);
+    }
+    .panel .body { padding: 14px; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    label { font-size: 12px; color: var(--muted); display: inline-block; margin-right: 4px; }
+    input, select, button, textarea {
+      font: inherit;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--panel);
+      color: var(--text);
+    }
+    input[type=number] { width: 90px; }
+    button {
+      cursor: pointer;
+      background: var(--accent);
+      border-color: var(--accent-strong);
+      color: white;
+      font-weight: 500;
+    }
+    button:hover { background: var(--accent-strong); }
+    button.secondary { background: var(--panel); color: var(--text); border-color: var(--border); font-weight: 400; }
+    button.secondary:hover { background: var(--soft); }
+    button.danger { background: var(--red); border-color: var(--red); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+    tr.active-row { background: #fff6e0; }
+
+    .pill {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-size: 11px;
+      background: var(--soft);
+      color: var(--muted);
+    }
+    .pill.green { background: #e3f2e9; color: var(--green); }
+    .pill.amber { background: #fbeed1; color: var(--amber); }
+    .pill.red { background: #f7dad7; color: var(--red); }
+
+    .progress {
+      height: 6px;
+      background: var(--soft);
+      border-radius: 3px;
+      overflow: hidden;
+      width: 100%;
+      margin-top: 4px;
+    }
+    .progress > div { height: 100%; background: var(--green); }
+
+    #logPanel pre {
+      margin: 0;
+      padding: 12px 14px;
+      background: #1f1d1a;
+      color: #e6e2d5;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      max-height: 320px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    #logPanel .toolbar {
+      padding: 6px 14px;
+      background: var(--soft);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    #logPanel .toolbar .indicator {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #ccc;
+      display: inline-block;
+    }
+    #logPanel .toolbar .indicator.live { background: var(--green); animation: pulse 1.4s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+    /* viewer */
+    #viewerPanel { grid-column: 1 / -1; display: none; }
+    #viewerPanel.open { display: block; }
+    .viewer-toolbar {
+      padding: 8px 14px;
+      background: var(--soft);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      font-size: 12px;
+      flex-wrap: wrap;
+    }
+    .viewer-toolbar select { font-size: 12px; padding: 4px 6px; max-width: 240px; }
+    .viewer-grid { display: grid; grid-template-columns: 240px 1fr; min-height: 400px; }
+    .viewer-tree {
+      border-right: 1px solid var(--border);
+      padding: 12px 0;
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+    .viewer-tree h3 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--muted);
+      padding: 4px 14px;
+      margin: 8px 0 2px;
+    }
+    .viewer-tree a {
+      display: block;
+      padding: 4px 14px;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .viewer-tree a:hover { background: var(--soft); }
+    .viewer-tree a.current { background: var(--soft); font-weight: 600; }
+    .viewer-tree a .diff-badge {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      line-height: 14px;
+      text-align: center;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .viewer-tree a .diff-badge.added { background: #e3f2e9; color: var(--green); }
+    .viewer-tree a .diff-badge.modified { background: #fbeed1; color: var(--amber); }
+    .viewer-tree a .diff-badge.deleted { background: #f7dad7; color: var(--red); }
+    .viewer-tree a .diff-badge.unchanged { background: transparent; color: var(--muted); opacity: .35; }
+    .viewer-tree a .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .viewer-page {
+      padding: 18px 26px;
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+    .viewer-page h1 { margin-top: 0; }
+    .viewer-page a { color: var(--accent); }
+    .viewer-page a[data-page] { cursor: pointer; }
+    .viewer-page p, .viewer-page li { line-height: 1.55; }
+    .viewer-page hr { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+    .viewer-compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      max-height: 70vh;
+    }
+    .viewer-compare .pane {
+      padding: 16px 20px;
+      overflow-y: auto;
+      max-height: 70vh;
+    }
+    .viewer-compare .pane.left { border-right: 1px solid var(--border); background: #fbf8f0; }
+    .viewer-compare .pane h1 { margin-top: 0; }
+    .viewer-compare .pane .pane-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--muted);
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+    .viewer-compare .pane.left .pane-label { color: var(--amber); }
+    .viewer-compare .pane.right .pane-label { color: var(--green); }
+
+    .empty { color: var(--muted); padding: 20px 14px; text-align: center; font-style: italic; }
+    .small { font-size: 12px; color: var(--muted); }
+    details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+    details[open] summary { margin-bottom: 8px; }
+    .file-input { font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Wiki Builder</h1>
+    <span class="sub">human-in-the-loop dashboard</span>
+  </header>
+
+  <main>
+    <section class="panel" id="newBuildPanel">
+      <h2>New build</h2>
+      <div class="body">
+        <div class="row" style="margin-bottom: 10px;">
+          <label>Source book:</label>
+          <select id="bookSelect" style="flex: 1; min-width: 220px;"></select>
+          <button class="secondary" onclick="refreshBooks()">↻</button>
+        </div>
+        <div class="row" style="margin-bottom: 10px;">
+          <label>or upload epub:</label>
+          <input type="file" accept=".epub" id="epubFile" class="file-input" style="flex: 1; min-width: 200px;" />
+          <button id="uploadBtn" onclick="uploadEpub()">Upload</button>
+        </div>
+        <hr style="border: none; border-top: 1px solid var(--border); margin: 12px 0;" />
+        <div class="row" style="margin-bottom: 10px;">
+          <label>Mode:</label>
+          <label class="small"><input type="radio" name="initMode" value="new" checked onchange="onInitModeChange()" /> Create new wiki</label>
+          <label class="small"><input type="radio" name="initMode" value="append" onchange="onInitModeChange()" /> Add to existing wiki (next in series)</label>
+        </div>
+        <div id="newWikiFields">
+          <div class="row" style="margin-bottom: 8px;">
+            <label>Wiki name:</label>
+            <input type="text" id="wikiName" placeholder="(auto from book title)" style="flex: 1; min-width: 200px;" />
+          </div>
+          <div class="row" style="margin-bottom: 8px;">
+            <label>Slug:</label>
+            <input type="text" id="wikiSlug" placeholder="(auto from name)" style="flex: 1; min-width: 200px;" />
+          </div>
+        </div>
+        <div id="appendWikiFields" style="display: none;">
+          <div class="row" style="margin-bottom: 8px;">
+            <label>Existing wiki:</label>
+            <select id="appendWikiSelect" style="flex: 1; min-width: 200px;"></select>
+          </div>
+          <div class="row" style="margin-bottom: 8px;">
+            <span class="small" style="opacity: 0.7;">
+              Books already in this wiki stay untouched. The new book's segments
+              are appended in story order; the worker forces a fresh OpenClaw
+              session on the first segment of the new book.
+            </span>
+          </div>
+        </div>
+        <details>
+          <summary>Advanced segmenter options</summary>
+          <div class="row" style="margin-top: 8px;">
+            <label>target:</label> <input type="number" id="targetTokens" value="7000" />
+            <label>min:</label> <input type="number" id="minTokens" value="3000" />
+            <label>max:</label> <input type="number" id="maxTokens" value="12000" />
+          </div>
+          <div class="row" style="margin-top: 8px;">
+            <label>absorb-below:</label> <input type="number" id="absorbBelow" value="1000" />
+            <label><input type="checkbox" id="forceRecreate" /> force recreate (new-wiki mode only)</label>
+          </div>
+        </details>
+        <div class="row" style="margin-top: 14px;">
+          <button onclick="initOrAppendWiki()" id="initOrAppendBtn">Initialize wiki</button>
+          <span class="small" id="initStatus"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="wikisPanel">
+      <h2>Wikis</h2>
+      <div class="body">
+        <table>
+          <thead>
+            <tr>
+              <th>Wiki</th>
+              <th>Progress</th>
+              <th>Pages</th>
+              <th>Run</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="wikisTbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="logPanel">
+      <h2>Live build log</h2>
+      <div class="toolbar">
+        <span class="indicator" id="logIndicator"></span>
+        <span id="logStatus">no active build</span>
+        <span style="flex: 1;"></span>
+        <button class="secondary" onclick="clearLog()">Clear</button>
+      </div>
+      <pre id="logOutput">(no output yet)</pre>
+    </section>
+
+    <section class="panel" id="viewerPanel">
+      <h2>Wiki viewer — <span id="viewerSlug"></span> <button class="secondary" style="float: right; margin: 6px;" onclick="closeViewer()">Close</button></h2>
+      <div class="viewer-toolbar">
+        <label>Checkpoint:</label>
+        <select id="viewerRef" onchange="onRefChange()"></select>
+        <label>Compare to:</label>
+        <select id="viewerCompare" onchange="onCompareChange()"></select>
+        <span style="flex: 1;"></span>
+        <span class="small" id="viewerCompareNote"></span>
+      </div>
+      <div class="viewer-grid">
+        <div class="viewer-tree" id="viewerTree"></div>
+        <div class="viewer-page" id="viewerPage"></div>
+      </div>
+    </section>
+  </main>
+
+<script>
+'use strict';
+
+const WORKING_REF = 'WORKING';
+
+const State = {
+  activeRun: null,
+  logSince: 0,
+  lastLogSlug: null,
+  viewer: {
+    slug: null,
+    currentPath: null,
+    ref: WORKING_REF,
+    compareTo: '',           // '' = no comparison
+    checkpoints: [],
+  },
+};
+
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(`${r.status}: ${t}`);
+  }
+  const ct = r.headers.get('content-type') || '';
+  return ct.includes('json') ? r.json() : r.text();
+}
+
+// ---------- books ----------
+
+async function refreshBooks() {
+  try {
+    const data = await api('GET', '/api/wiki-builder/books');
+    const sel = document.getElementById('bookSelect');
+    const cur = sel.value;
+    sel.innerHTML = '';
+    if (!data.books.length) {
+      const o = document.createElement('option');
+      o.value = ''; o.textContent = '(no books — upload an epub)';
+      sel.appendChild(o);
+      return;
+    }
+    for (const b of data.books) {
+      const o = document.createElement('option');
+      o.value = b.id;
+      const wikiNote = b.wiki_count ? ` — ${b.wiki_count} wiki(s)` : '';
+      const status = b.embedding_status === 'ready' ? '' : ` [${b.embedding_status}]`;
+      o.textContent = `#${b.id} ${b.title}${status}${wikiNote}`;
+      o.dataset.title = b.title;
+      sel.appendChild(o);
+    }
+    if (cur) sel.value = cur;
+    autofillName();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function autofillName() {
+  const sel = document.getElementById('bookSelect');
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt) return;
+  const t = opt.dataset.title || '';
+  const nameEl = document.getElementById('wikiName');
+  const slugEl = document.getElementById('wikiSlug');
+  if (!nameEl.value) nameEl.placeholder = t || '(auto from book title)';
+  if (!slugEl.value && t) slugEl.placeholder = slugify(t);
+}
+
+function slugify(s) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+async function uploadEpub() {
+  const input = document.getElementById('epubFile');
+  if (!input.files.length) { alert('pick an epub file first'); return; }
+  const btn = document.getElementById('uploadBtn');
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
+  try {
+    const fd = new FormData();
+    fd.append('file', input.files[0]);
+    const r = await fetch('/api/books/import', { method: 'POST', body: fd });
+    if (!r.ok) {
+      alert(`upload failed: ${await r.text()}`);
+      return;
+    }
+    const data = await r.json();
+    await refreshBooks();
+    document.getElementById('bookSelect').value = data.book_id;
+    autofillName();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Upload';
+  }
+}
+
+document.getElementById('bookSelect').addEventListener('change', autofillName);
+
+// ---------- init ----------
+
+function getInitMode() {
+  const checked = document.querySelector('input[name="initMode"]:checked');
+  return checked ? checked.value : 'new';
+}
+
+function onInitModeChange() {
+  const mode = getInitMode();
+  document.getElementById('newWikiFields').style.display = mode === 'new' ? '' : 'none';
+  document.getElementById('appendWikiFields').style.display = mode === 'append' ? '' : 'none';
+  document.getElementById('initOrAppendBtn').textContent =
+    mode === 'append' ? 'Add book to wiki' : 'Initialize wiki';
+  if (mode === 'append') {
+    refreshAppendWikiSelect();
+  }
+}
+
+async function refreshAppendWikiSelect() {
+  const sel = document.getElementById('appendWikiSelect');
+  const prior = sel.value;
+  try {
+    const data = await api('GET', '/api/wiki-builder/wikis');
+    sel.innerHTML = '';
+    for (const w of (data.wikis || [])) {
+      const opt = document.createElement('option');
+      opt.value = w.slug;
+      opt.textContent = `${w.name} (${w.segments.applied} applied)`;
+      sel.appendChild(opt);
+    }
+    if (prior) sel.value = prior;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function initOrAppendWiki() {
+  const mode = getInitMode();
+  if (mode === 'append') {
+    return appendBookToWiki();
+  }
+  return initWiki();
+}
+
+async function initWiki() {
+  const sel = document.getElementById('bookSelect');
+  const bookId = parseInt(sel.value || 0, 10);
+  if (!bookId) { alert('pick a book first'); return; }
+  const status = document.getElementById('initStatus');
+  status.textContent = 'initializing…';
+
+  const payload = {
+    book_id: bookId,
+    name: document.getElementById('wikiName').value.trim() || null,
+    slug: document.getElementById('wikiSlug').value.trim() || null,
+    target_tokens: parseInt(document.getElementById('targetTokens').value, 10),
+    min_tokens: parseInt(document.getElementById('minTokens').value, 10),
+    max_tokens: parseInt(document.getElementById('maxTokens').value, 10),
+    absorb_below_tokens: parseInt(document.getElementById('absorbBelow').value, 10),
+    force_recreate: document.getElementById('forceRecreate').checked,
+  };
+
+  try {
+    const data = await api('POST', '/api/wiki-builder/init', payload);
+    status.textContent = `created '${data.slug}'`;
+    document.getElementById('wikiName').value = '';
+    document.getElementById('wikiSlug').value = '';
+    document.getElementById('forceRecreate').checked = false;
+    await refreshWikis();
+  } catch (e) {
+    status.textContent = '';
+    alert(`init failed:\n${e.message}`);
+  }
+}
+
+async function appendBookToWiki() {
+  const bookSel = document.getElementById('bookSelect');
+  const bookId = parseInt(bookSel.value || 0, 10);
+  if (!bookId) { alert('pick the new book to add'); return; }
+  const wikiSlug = document.getElementById('appendWikiSelect').value;
+  if (!wikiSlug) { alert('pick the wiki to add to'); return; }
+  const status = document.getElementById('initStatus');
+  status.textContent = 'appending…';
+
+  const payload = {
+    wiki_slug: wikiSlug,
+    book_id: bookId,
+    target_tokens: parseInt(document.getElementById('targetTokens').value, 10),
+    min_tokens: parseInt(document.getElementById('minTokens').value, 10),
+    max_tokens: parseInt(document.getElementById('maxTokens').value, 10),
+    absorb_below_tokens: parseInt(document.getElementById('absorbBelow').value, 10),
+  };
+
+  try {
+    const data = await api('POST', '/api/wiki-builder/add-book', payload);
+    status.textContent = `added book ${data.book_id} to '${data.wiki_slug}'`;
+    await refreshWikis();
+  } catch (e) {
+    status.textContent = '';
+    alert(`append failed:\n${e.message}`);
+  }
+}
+
+// ---------- wikis ----------
+
+async function refreshWikis() {
+  try {
+    const data = await api('GET', '/api/wiki-builder/wikis');
+    const threshold = data.compact_at_total_tokens || 240000;
+    const tbody = document.getElementById('wikisTbody');
+
+    // Preserve per-row user input (segment count + fresh-session checkbox
+    // + model picker) across the full re-render the polling loop triggers
+    // every ~4s.
+    const preservedInputs = {};
+    tbody.querySelectorAll('input[id^="run-"]').forEach(el => {
+      preservedInputs[el.id] = { kind: 'value', v: el.value };
+    });
+    tbody.querySelectorAll('input[id^="reset-"]').forEach(el => {
+      preservedInputs[el.id] = { kind: 'checked', v: el.checked };
+    });
+    tbody.querySelectorAll('select[id^="model-"]').forEach(el => {
+      preservedInputs[el.id] = { kind: 'value', v: el.value };
+    });
+    tbody.querySelectorAll('input[id^="threshold-"]').forEach(el => {
+      preservedInputs[el.id] = { kind: 'value', v: el.value };
+    });
+    // Don't clobber an input the user is actively editing.
+    const activeEl = document.activeElement;
+    const activeId = (activeEl && (
+      activeEl.id.startsWith('run-') ||
+      activeEl.id.startsWith('reset-') ||
+      activeEl.id.startsWith('model-') ||
+      activeEl.id.startsWith('threshold-')
+    )) ? activeEl.id : null;
+
+    tbody.innerHTML = '';
+    if (!data.wikis.length) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td colspan="5" class="empty">no wikis yet — initialize one above</td>';
+      tbody.appendChild(tr);
+      return;
+    }
+    const activeSlug = State.activeRun?.slug || null;
+    for (const w of data.wikis) {
+      const tr = document.createElement('tr');
+      if (w.slug === activeSlug) tr.className = 'active-row';
+      const seg = w.segments;
+      const reachable = seg.total - seg.absorbed;
+      const pct = reachable ? Math.round(100 * seg.applied / reachable) : 0;
+      const statusBits = [
+        seg.applied ? `<span class="pill green">${seg.applied} applied</span>` : '',
+        seg.pending ? `<span class="pill">${seg.pending} pending</span>` : '',
+        seg.absorbed ? `<span class="pill amber">${seg.absorbed} absorbed</span>` : '',
+        seg.quarantined ? `<span class="pill red">${seg.quarantined} quarantined</span>` : '',
+      ].filter(Boolean).join(' ');
+      const isActive = activeSlug === w.slug;
+      const isAnyActive = activeSlug !== null;
+      // Per-wiki compaction threshold. Falls back to the global default
+      // when the wiki has no override.
+      const wikiThreshold = (typeof w.compact_at_total_tokens === 'number' && w.compact_at_total_tokens > 0)
+        ? w.compact_at_total_tokens
+        : threshold;
+      const isCustomThreshold = (typeof w.compact_at_total_tokens === 'number' && w.compact_at_total_tokens > 0);
+      let sessionLabel;
+      if (w.openclaw_session_id) {
+        const total = w.openclaw_session_total_tokens;
+        if (typeof total === 'number') {
+          const kTotal = Math.round(total / 1000);
+          const kThreshold = Math.round(wikiThreshold / 1000);
+          const pctOfThreshold = Math.min(100, Math.round(100 * total / wikiThreshold));
+          let colorClass = '';
+          if (pctOfThreshold >= 100) colorClass = 'red';
+          else if (pctOfThreshold >= 80) colorClass = 'amber';
+          else colorClass = 'green';
+          sessionLabel = `<span class="small" title="${escapeHtml(w.openclaw_session_id)}">` +
+            `session: <span class="pill ${colorClass}">${kTotal}k / ${kThreshold}k</span>` +
+            `</span>`;
+        } else {
+          sessionLabel = `<span class="small" title="${escapeHtml(w.openclaw_session_id)}">session: <code>resume</code></span>`;
+        }
+      } else {
+        sessionLabel = `<span class="small">session: <code>new</code></span>`;
+      }
+      const thresholdEditor = `<span class="small" style="display: block; margin-top: 2px;">` +
+        `compact at: ` +
+        `<input type="number" id="threshold-${escapeHtml(w.slug)}" ` +
+        `value="${Math.round(wikiThreshold / 1000)}" min="10" step="10" ` +
+        `style="width: 60px;" ` +
+        `title="${isCustomThreshold ? 'custom override (k tokens)' : 'global default (k tokens) — edit to override'}" ` +
+        `onchange="updateThreshold('${escapeHtml(w.slug)}')" />` +
+        `k tokens` +
+        (isCustomThreshold ? ` <a href="#" onclick="clearThreshold('${escapeHtml(w.slug)}'); return false;" title="clear override, use default">×</a>` : '') +
+        `</span>`;
+      const resetCheckboxId = `reset-${w.slug}`;
+      const modelSelectId = `model-${w.slug}`;
+      tr.innerHTML = `
+        <td>
+          <strong>${escapeHtml(w.name)}</strong><br/>
+          <span class="small">slug: <code>${escapeHtml(w.slug)}</code></span><br/>
+          ${sessionLabel}
+          ${thresholdEditor}
+        </td>
+        <td>
+          ${statusBits}
+          <div class="progress"><div style="width: ${pct}%"></div></div>
+          <span class="small">${seg.applied}/${reachable} segments (${pct}%)</span>
+        </td>
+        <td>${w.page_count}</td>
+        <td>
+          <input type="number" id="run-${escapeHtml(w.slug)}" value="3" style="width: 60px;" min="1" />
+          ${isActive
+            ? `<button class="danger" onclick="stopRun('${escapeHtml(w.slug)}')">Stop</button>`
+            : `<button onclick="runWiki('${escapeHtml(w.slug)}', false)" ${isAnyActive ? 'disabled' : ''}>Run</button>
+               <button class="secondary" onclick="runWiki('${escapeHtml(w.slug)}', true)" ${isAnyActive ? 'disabled' : ''}>Run all</button>`}
+          <label class="small" style="display: block; margin-top: 4px;">
+            model:
+            <select id="${modelSelectId}" ${isActive ? 'disabled' : ''}>
+              <option value="gpt-5.4-mini">gpt-5.4-mini</option>
+              <option value="gpt-5.5">gpt-5.5</option>
+            </select>
+          </label>
+          ${!isActive && w.openclaw_session_id
+            ? `<label class="small" style="display: block; margin-top: 4px;"><input type="checkbox" id="${resetCheckboxId}" /> fresh session</label>`
+            : ''}
+        </td>
+        <td>
+          <button class="secondary" onclick="openViewer('${escapeHtml(w.slug)}')">View</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    }
+
+    // Restore user-entered input values that we just clobbered with innerHTML.
+    for (const [id, rec] of Object.entries(preservedInputs)) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      if (rec.kind === 'value') el.value = rec.v;
+      else if (rec.kind === 'checked') el.checked = rec.v;
+    }
+    // If the user was mid-edit, restore focus + caret position so their
+    // typing isn't interrupted by the 4-second polling tick.
+    if (activeId) {
+      const el = document.getElementById(activeId);
+      if (el) {
+        el.focus();
+        if (typeof el.setSelectionRange === 'function' && el.type !== 'number') {
+          // setSelectionRange doesn't work on type=number in most browsers;
+          // focus alone is enough there.
+          try { el.setSelectionRange(el.value.length, el.value.length); } catch {}
+        }
+      }
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function updateThreshold(slug) {
+  const el = document.getElementById(`threshold-${slug}`);
+  if (!el) return;
+  const k = parseInt(el.value, 10);
+  if (!k || k < 10) {
+    alert('threshold must be at least 10 (k tokens)');
+    return;
+  }
+  const totalTokens = k * 1000;
+  try {
+    await api('PUT', `/api/wiki-builder/wiki/${encodeURIComponent(slug)}/compaction-threshold`, {
+      compact_at_total_tokens: totalTokens,
+    });
+    refreshWikis();
+  } catch (e) {
+    console.error(e);
+    alert(`failed to update threshold: ${e.message || e}`);
+  }
+}
+
+async function clearThreshold(slug) {
+  try {
+    await api('PUT', `/api/wiki-builder/wiki/${encodeURIComponent(slug)}/compaction-threshold`, {
+      compact_at_total_tokens: null,
+    });
+    refreshWikis();
+  } catch (e) {
+    console.error(e);
+    alert(`failed to clear threshold: ${e.message || e}`);
+  }
+}
+
+async function runWiki(slug, runAll) {
+  const inp = document.getElementById(`run-${slug}`);
+  const n = runAll ? null : parseInt(inp.value, 10);
+  if (!runAll && (!n || n < 1)) { alert('enter a positive segment count'); return; }
+  const resetEl = document.getElementById(`reset-${slug}`);
+  const resetSession = !!(resetEl && resetEl.checked);
+  const modelEl = document.getElementById(`model-${slug}`);
+  const miniModel = modelEl ? modelEl.value : null;
+  if (resetSession && !confirm(`Force a brand-new OpenClaw session for '${slug}'? The agent will lose its in-context memory of prior segments.`)) {
+    return;
+  }
+  try {
+    const data = await api('POST', `/api/wiki-builder/run/${encodeURIComponent(slug)}`, { max_segments: n, reset_session: resetSession, mini_model: miniModel });
+    State.activeRun = { slug, startedAt: data.started_at };
+    State.logSince = 0;
+    State.lastLogSlug = slug;
+    document.getElementById('logOutput').textContent = '';
+    await refreshWikis();
+    pollLog();
+  } catch (e) {
+    alert(`run failed:\n${e.message}`);
+  }
+}
+
+async function stopRun(slug) {
+  if (!confirm(`Stop the build for '${slug}'? It will finish the current segment first.`)) return;
+  try {
+    await api('POST', `/api/wiki-builder/run/${encodeURIComponent(slug)}/stop`);
+  } catch (e) {
+    alert(`stop failed:\n${e.message}`);
+  }
+}
+
+// ---------- log polling ----------
+
+let logTimer = null;
+
+async function pollLog() {
+  const slug = State.activeRun?.slug || State.lastLogSlug;
+  if (!slug) {
+    setLogStatus(false, 'no active build');
+    return;
+  }
+  try {
+    const data = await api('GET', `/api/wiki-builder/run/${encodeURIComponent(slug)}/log?since=${State.logSince}`);
+    if (data.lines && data.lines.length) {
+      const out = document.getElementById('logOutput');
+      const wasAtBottom = out.scrollTop + out.clientHeight >= out.scrollHeight - 20;
+      out.textContent = (out.textContent === '(no output yet)' ? '' : out.textContent)
+        + (out.textContent && !out.textContent.endsWith('\n') ? '\n' : '')
+        + data.lines.join('\n');
+      if (wasAtBottom) out.scrollTop = out.scrollHeight;
+      State.logSince = data.next_since;
+    }
+    setLogStatus(data.running, data.running
+      ? `building '${slug}' — ${State.logSince} log lines`
+      : `'${slug}' finished (exit ${data.exit_code})`);
+    if (data.running) {
+      logTimer = setTimeout(pollLog, 1200);
+    } else {
+      State.activeRun = null;
+      logTimer = null;
+      await refreshWikis();
+      // If the viewer is open on this wiki, refresh its tree and checkpoint list.
+      if (State.viewer.slug === slug) {
+        await loadCheckpoints(slug);
+        await loadViewerTree(slug);
+      }
+    }
+  } catch (e) {
+    console.error(e);
+    logTimer = setTimeout(pollLog, 3000);
+  }
+}
+
+function setLogStatus(running, msg) {
+  document.getElementById('logIndicator').classList.toggle('live', !!running);
+  document.getElementById('logStatus').textContent = msg;
+}
+
+function clearLog() {
+  document.getElementById('logOutput').textContent = '(cleared)';
+  State.logSince = 0;
+}
+
+// ---------- viewer ----------
+
+async function openViewer(slug) {
+  State.viewer.slug = slug;
+  State.viewer.currentPath = null;
+  State.viewer.ref = WORKING_REF;
+  State.viewer.compareTo = '';
+  document.getElementById('viewerSlug').textContent = slug;
+  document.getElementById('viewerPanel').classList.add('open');
+  document.getElementById('viewerPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  await loadCheckpoints(slug);
+  await loadViewerTree(slug);
+  // Default to index.md if present.
+  await loadViewerPage('index.md');
+}
+
+function closeViewer() {
+  document.getElementById('viewerPanel').classList.remove('open');
+  State.viewer.slug = null;
+}
+
+async function loadCheckpoints(slug) {
+  try {
+    const data = await api('GET', `/api/wiki-builder/wiki/${encodeURIComponent(slug)}/checkpoints`);
+    State.viewer.checkpoints = data.checkpoints || [];
+  } catch (e) {
+    console.error(e);
+    State.viewer.checkpoints = [];
+  }
+  renderCheckpointSelectors();
+}
+
+function renderCheckpointSelectors() {
+  const refSel = document.getElementById('viewerRef');
+  const cmpSel = document.getElementById('viewerCompare');
+  const cps = State.viewer.checkpoints;
+
+  const optsForMain = [{ v: WORKING_REF, t: 'Working tree (current)' }]
+    .concat(cps.map(c => ({ v: c.ref, t: `${c.ref} — ${c.subject}` })));
+  const optsForCmp = [{ v: '', t: '(no comparison)' }, { v: WORKING_REF, t: 'Working tree (current)' }]
+    .concat(cps.map(c => ({ v: c.ref, t: `${c.ref} — ${c.subject}` })));
+
+  refSel.innerHTML = optsForMain.map(o =>
+    `<option value="${escapeHtml(o.v)}"${o.v === State.viewer.ref ? ' selected' : ''}>${escapeHtml(o.t)}</option>`
+  ).join('');
+  cmpSel.innerHTML = optsForCmp.map(o =>
+    `<option value="${escapeHtml(o.v)}"${o.v === State.viewer.compareTo ? ' selected' : ''}>${escapeHtml(o.t)}</option>`
+  ).join('');
+
+  const note = document.getElementById('viewerCompareNote');
+  if (State.viewer.compareTo) {
+    note.textContent = `diff: ${labelForRef(State.viewer.compareTo)} → ${labelForRef(State.viewer.ref)}`;
+  } else {
+    note.textContent = '';
+  }
+}
+
+function labelForRef(ref) {
+  if (ref === WORKING_REF) return 'working tree';
+  return ref;
+}
+
+async function onRefChange() {
+  State.viewer.ref = document.getElementById('viewerRef').value;
+  renderCheckpointSelectors();
+  await loadViewerTree(State.viewer.slug);
+  if (State.viewer.currentPath) await loadViewerPage(State.viewer.currentPath);
+}
+
+async function onCompareChange() {
+  State.viewer.compareTo = document.getElementById('viewerCompare').value;
+  renderCheckpointSelectors();
+  await loadViewerTree(State.viewer.slug);
+  if (State.viewer.currentPath) await loadViewerPage(State.viewer.currentPath);
+}
+
+async function loadViewerTree(slug) {
+  const tree = document.getElementById('viewerTree');
+  try {
+    const params = new URLSearchParams({ ref: State.viewer.ref });
+    if (State.viewer.compareTo) params.set('compare_to', State.viewer.compareTo);
+    const data = await api('GET', `/api/wiki-builder/wiki/${encodeURIComponent(slug)}/tree?${params}`);
+    let html = '';
+    if (data.specials.length) {
+      html += '<h3>front matter</h3>';
+      for (const p of data.specials) html += treeLink(p);
+    }
+    for (const sec of data.sections) {
+      html += `<h3>${escapeHtml(sec.name)}</h3>`;
+      for (const p of sec.pages) html += treeLink(p);
+    }
+    if (!html) html = '<div class="empty">no pages yet</div>';
+    tree.innerHTML = html;
+    tree.querySelectorAll('a[data-page]').forEach(a => {
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        loadViewerPage(a.dataset.page);
+      });
+    });
+    highlightCurrent();
+  } catch (e) {
+    tree.innerHTML = `<div class="empty">tree load error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+const DIFF_GLYPH = { added: '+', modified: '~', deleted: '−', unchanged: '·' };
+
+function treeLink(p) {
+  let badge = '';
+  if (p.diff) {
+    const glyph = DIFF_GLYPH[p.diff] || '';
+    badge = `<span class="diff-badge ${escapeHtml(p.diff)}" title="${escapeHtml(p.diff)}">${glyph}</span>`;
+  }
+  return `<a href="#" data-page="${escapeHtml(p.path)}">${badge}<span class="label">${escapeHtml(p.name)}</span></a>`;
+}
+
+function highlightCurrent() {
+  const tree = document.getElementById('viewerTree');
+  tree.querySelectorAll('a[data-page]').forEach(a => {
+    a.classList.toggle('current', a.dataset.page === State.viewer.currentPath);
+  });
+}
+
+function bindPageLinks(container) {
+  container.querySelectorAll('a[data-page]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      loadViewerPage(a.dataset.page);
+    });
+  });
+}
+
+async function fetchPageHtml(slug, path, ref) {
+  const params = new URLSearchParams({ path, ref });
+  return await api('GET', `/api/wiki-builder/wiki/${encodeURIComponent(slug)}/page?${params}`);
+}
+
+async function loadViewerPage(path) {
+  const slug = State.viewer.slug;
+  if (!slug) return;
+  State.viewer.currentPath = path;
+  highlightCurrent();
+  const target = document.getElementById('viewerPage');
+
+  if (State.viewer.compareTo) {
+    target.classList.remove('viewer-page');
+    target.classList.add('viewer-compare');
+    target.innerHTML = '<div class="pane left"><div class="pane-label">loading…</div></div><div class="pane right"><div class="pane-label">loading…</div></div>';
+    try {
+      const [oldHtml, newHtml] = await Promise.all([
+        fetchPageHtml(slug, path, State.viewer.compareTo),
+        fetchPageHtml(slug, path, State.viewer.ref),
+      ]);
+      target.innerHTML =
+        `<div class="pane left"><div class="pane-label">${escapeHtml(labelForRef(State.viewer.compareTo))}</div>${oldHtml}</div>` +
+        `<div class="pane right"><div class="pane-label">${escapeHtml(labelForRef(State.viewer.ref))}</div>${newHtml}</div>`;
+      bindPageLinks(target);
+      target.scrollTop = 0;
+    } catch (e) {
+      target.innerHTML = `<div class="empty">page load error: ${escapeHtml(e.message)}</div>`;
+    }
+    return;
+  }
+
+  // single-pane view
+  target.classList.remove('viewer-compare');
+  target.classList.add('viewer-page');
+  target.innerHTML = '<div class="empty">loading…</div>';
+  try {
+    const html = await fetchPageHtml(slug, path, State.viewer.ref);
+    target.innerHTML = html;
+    bindPageLinks(target);
+    target.scrollTop = 0;
+  } catch (e) {
+    target.innerHTML = `<div class="empty">page load error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ---------- utils + boot ----------
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function boot() {
+  await refreshBooks();
+  await refreshWikis();
+  setInterval(refreshWikis, 4000);
+  // If something was running when the page reloaded, surface it.
+  try {
+    const wikis = (await api('GET', '/api/wiki-builder/wikis')).wikis;
+    for (const w of wikis) {
+      const log = await api('GET', `/api/wiki-builder/run/${encodeURIComponent(w.slug)}/log?since=0`);
+      if (log.running) {
+        State.activeRun = { slug: w.slug, startedAt: log.started_at };
+        State.logSince = 0;
+        State.lastLogSlug = w.slug;
+        pollLog();
+        break;
+      }
+    }
+  } catch (e) { console.error(e); }
+}
+
+boot();
+</script>
+</body>
+</html>

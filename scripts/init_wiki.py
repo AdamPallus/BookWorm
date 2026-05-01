@@ -5,6 +5,10 @@
   `--book-id` order on the CLI.
 - Creates `data/wikis/{slug}/` with empty wiki/ subdirs and `git init`.
 - Segments each book's chapters and populates `wiki_segments` with status='pending'.
+- Marks any segment whose token_count is below `--absorb-below-tokens` as
+  status='absorbed' so the worker folds it into the next pending segment
+  instead of giving the agent a no-content turn (dedications, copyright,
+  very short chapters).
 - For Phase 1 we only support a single book; multi-book is structurally
   supported but unused until Phase 4.
 
@@ -14,12 +18,14 @@ Usage:
     --name "Red Rising" \
     --book-id 5 \
     [--target-tokens 7000] [--min-tokens 3000] [--max-tokens 12000] \
+    [--absorb-below-tokens 1000] \
     [--skip-front-matter-chapters 0,1] \
     [--force-recreate]
 
 The `--skip-front-matter-chapters` flag accepts a comma-separated list of
 chapter_index values to omit from segmentation (copyright pages, dedications,
-etc.).
+etc.). Prefer `--absorb-below-tokens` for small chapters that you still want
+the agent to *see* (rolled into the next segment) rather than skip outright.
 """
 
 from __future__ import annotations
@@ -29,7 +35,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable, List, Set
+from typing import Iterable, List, Optional, Set
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -59,11 +65,9 @@ def _init_repo(wiki_repo: Path, name: str) -> None:
     encoding="utf-8",
   )
   (wiki_dir / "open-questions.md").write_text(
-    "# Open Questions\n\n## Active\n\n## Resolved\n",
-    encoding="utf-8",
-  )
-  (wiki_dir / "log.md").write_text(
-    "# Wiki Log\n\nAppend-only chronological record of segment commits.\n",
+    "# Open Questions\n\n"
+    "What a thoughtful reader is currently wondering about, "
+    "tracked across the book.\n",
     encoding="utf-8",
   )
   _git(wiki_repo, "init")
@@ -135,6 +139,57 @@ def upsert_wiki(
   return cur.lastrowid
 
 
+def choose_absorbed_segment_ids(
+  rows: Iterable[tuple],
+  threshold_tokens: int,
+) -> List[int]:
+  """Pure helper: pick segment ids to mark 'absorbed'.
+
+  Each row is (id, story_order, token_count). A row qualifies if its
+  token_count is below `threshold_tokens` AND it is not the final segment
+  (there must be a later segment to fold into).
+  """
+  ordered = sorted(rows, key=lambda r: r[1])
+  if len(ordered) <= 1:
+    return []
+  return [seg_id for seg_id, _story_order, token_count in ordered[:-1]
+          if token_count < threshold_tokens]
+
+
+def mark_absorbed_segments(
+  conn,
+  wiki_id: int,
+  threshold_tokens: int,
+  *,
+  book_id: Optional[int] = None,
+) -> int:
+  """Flip pending segments below the absorb threshold to status='absorbed'.
+
+  When `book_id` is given, only segments from that book are considered —
+  used by `add_book_to_wiki` so we don't re-evaluate already-applied
+  segments from earlier books in the series.
+  """
+  if threshold_tokens <= 0:
+    return 0
+  if book_id is None:
+    rows = conn.execute(
+      "SELECT id, story_order, token_count FROM wiki_segments "
+      "WHERE wiki_id = ? AND status = 'pending' ORDER BY story_order ASC",
+      (wiki_id,),
+    ).fetchall()
+  else:
+    rows = conn.execute(
+      "SELECT id, story_order, token_count FROM wiki_segments "
+      "WHERE wiki_id = ? AND book_id = ? AND status = 'pending' ORDER BY story_order ASC",
+      (wiki_id, book_id),
+    ).fetchall()
+  ids = choose_absorbed_segment_ids([(r[0], r[1], r[2]) for r in rows], threshold_tokens)
+  for seg_id in ids:
+    conn.execute("UPDATE wiki_segments SET status = 'absorbed' WHERE id = ?", (seg_id,))
+  conn.commit()
+  return len(ids)
+
+
 def populate_segments(
   conn,
   *,
@@ -142,10 +197,20 @@ def populate_segments(
   book_ids: List[int],
   segmenter_config: SegmenterConfig,
   skip_chapters: Set[int],
+  start_story_order: int = 0,
+  start_series_index: int = 0,
 ) -> int:
-  story_order = 0
+  """Insert wiki_books + wiki_segments rows for a list of books.
+
+  When extending an existing wiki (adding the next book in a series), pass
+  `start_story_order = MAX(story_order)+1` and `start_series_index =
+  MAX(series_index)+1` from the wiki so segments and book-ordering continue
+  cleanly past the existing rows.
+  """
+  story_order = start_story_order
   inserted = 0
-  for series_index, book_id in enumerate(book_ids):
+  for offset, book_id in enumerate(book_ids):
+    series_index = start_series_index + offset
     conn.execute(
       "INSERT INTO wiki_books (wiki_id, book_id, series_index) VALUES (?, ?, ?)",
       (wiki_id, book_id, series_index),
@@ -200,6 +265,10 @@ def main() -> None:
   parser.add_argument("--target-tokens", type=int, default=7000)
   parser.add_argument("--min-tokens", type=int, default=3000)
   parser.add_argument("--max-tokens", type=int, default=12000)
+  parser.add_argument("--absorb-below-tokens", type=int, default=1000,
+                      help="Segments below this token count get status='absorbed' "
+                           "and are folded into the next pending segment by the worker. "
+                           "Set to 0 to disable.")
   parser.add_argument("--skip-front-matter-chapters", type=str, default="",
                       help="Comma-separated list of chapter_index values to skip (e.g. '0,1').")
   parser.add_argument("--force-recreate", action="store_true",
@@ -249,6 +318,14 @@ def main() -> None:
     skip_chapters=skip_chapters,
   )
   print(f"[init] inserted {inserted} pending segments", flush=True)
+
+  absorbed = mark_absorbed_segments(conn, wiki_id, args.absorb_below_tokens)
+  if absorbed:
+    print(
+      f"[init] marked {absorbed} segments 'absorbed' "
+      f"(below {args.absorb_below_tokens} tokens); they will be folded into the next pending segment",
+      flush=True,
+    )
 
 
 if __name__ == "__main__":

@@ -41,6 +41,11 @@ def main() -> None:
   parser.add_argument("--max-segments", type=int, default=None)
   parser.add_argument("--mini-model", default=openclaw_client.DEFAULT_MINI_MODEL)
   parser.add_argument("--read-timeout-seconds", type=float, default=600.0)
+  parser.add_argument(
+    "--reset-session",
+    action="store_true",
+    help="Force a brand-new OpenClaw session even if one is already persisted on the wiki.",
+  )
   parser.add_argument("--verbose", action="store_true")
   args = parser.parse_args()
 
@@ -57,6 +62,7 @@ def main() -> None:
     max_segments=args.max_segments,
     mini_model=args.mini_model,
     read_timeout_seconds=args.read_timeout_seconds,
+    reset_session=args.reset_session,
   )
   processed = run_worker(conn, wiki_id, config)
   print(f"[build] processed {processed} segments")

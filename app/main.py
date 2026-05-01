@@ -13,6 +13,8 @@ from .db import COVER_DIR, EPUB_DIR, connect, get_setting, set_setting
 from .ingest import chunk_chapter, extract_book
 from .rag import embed_texts, get_api_key, new_session_id, set_api_key, stream_answer, stream_follow_up
 from .wiki import ensure_wiki_artifacts, ensure_wiki_ingested, get_book_wiki_state, load_query_wiki_context, resolve_default_wiki_view
+from .wiki_v2 import list_candidate_wikis, load_selected_wiki_context
+from .wiki_builder.dashboard import router as wiki_builder_router
 
 try:
   import sqlite_vec
@@ -28,6 +30,8 @@ app.add_middleware(
   allow_methods=["*"],
   allow_headers=["*"],
 )
+
+app.include_router(wiki_builder_router)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -103,6 +107,11 @@ class ChunkCfiUpdate(BaseModel):
 
 class ChunkCfiBatchUpdate(BaseModel):
   updates: List[ChunkCfiUpdate]
+
+
+class SelectedWikiUpdate(BaseModel):
+  # wiki_id=None clears the selection and falls back to legacy wiki discovery.
+  wiki_id: Optional[int] = None
 
 
 class BookmarkPayload(BaseModel):
@@ -917,6 +926,49 @@ def get_book(book_id: int):
     conn.close()
 
 
+@app.get("/api/books/{book_id}/wikis")
+def list_wikis_for_book(book_id: int):
+  """List wiki candidates for the reader UI dropdown.
+
+  Returns the wikis linked to this book via wiki_books (i.e. built by the
+  segment pipeline), plus the currently selected wiki_id (or None).
+  """
+  conn = connect()
+  try:
+    book = _book_row_or_404(conn, book_id)
+    candidates = list_candidate_wikis(conn, book_id)
+    return {
+      "selected_wiki_id": book["selected_wiki_id"] if "selected_wiki_id" in book.keys() else None,
+      "wikis": candidates,
+    }
+  finally:
+    conn.close()
+
+
+@app.put("/api/books/{book_id}/selected-wiki")
+def set_selected_wiki(book_id: int, payload: SelectedWikiUpdate):
+  """Set (or clear) the book's preferred wiki for Q&A context."""
+  conn = connect()
+  try:
+    _book_row_or_404(conn, book_id)
+    wiki_id = payload.wiki_id
+    if wiki_id is not None:
+      link = conn.execute(
+        "SELECT 1 FROM wiki_books WHERE wiki_id = ? AND book_id = ?",
+        (wiki_id, book_id),
+      ).fetchone()
+      if not link:
+        raise HTTPException(status_code=400, detail="wiki is not linked to this book")
+    conn.execute(
+      "UPDATE books SET selected_wiki_id = ? WHERE id = ?",
+      (wiki_id, book_id),
+    )
+    conn.commit()
+    return {"ok": True, "selected_wiki_id": wiki_id}
+  finally:
+    conn.close()
+
+
 @app.post("/api/books/{book_id}/wiki/ingest")
 def ingest_wiki(book_id: int):
   conn = connect()
@@ -1490,18 +1542,31 @@ def query(book_id: int, payload: QueryRequest):
   except Exception as exc:
     raise HTTPException(status_code=500, detail=f"Vector search unavailable: {exc}")
 
+  # Prefer a segment-built wiki if the user has selected one for this book.
+  # Falls back to the legacy per-book wiki bundle if no selection is set.
+  wiki_context = None
   try:
-    wiki_context = load_query_wiki_context(
+    wiki_context = load_selected_wiki_context(
       conn,
       book_id,
-      book["title"],
-      book["epub_path"],
-      current_chapter_index,
-      question,
-      question_embedding=base_question_embedding,
+      chapter_index=ask_chapter_index if ask_chapter_index is not None else current_chapter_index,
+      char_offset=ask_char_offset,
     )
   except Exception:
     wiki_context = None
+  if wiki_context is None:
+    try:
+      wiki_context = load_query_wiki_context(
+        conn,
+        book_id,
+        book["title"],
+        book["epub_path"],
+        current_chapter_index,
+        question,
+        question_embedding=base_question_embedding,
+      )
+    except Exception:
+      wiki_context = None
 
   expanded_question = question
   if wiki_context and wiki_context.get("search_terms"):

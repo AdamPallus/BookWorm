@@ -62,8 +62,12 @@ def new_session_id(label: str = "wiki-builder") -> str:
   return f"bookworm-{label}-{uuid.uuid4()}"
 
 
-def _post_stream(payload: dict, headers: dict, *, read_timeout: float) -> str:
+def _post_stream(payload: dict, headers: dict, *, read_timeout: float) -> tuple[str, Optional[dict]]:
+  """Return (text, usage). `usage` is the {input_tokens, output_tokens,
+  total_tokens} dict from the terminal `response.completed` event, or None
+  if the stream ended without one."""
   buf: List[str] = []
+  usage: Optional[dict] = None
   with httpx.stream(
     "POST",
     f"{OPENCLAW_BASE_URL}/v1/responses",
@@ -82,11 +86,16 @@ def _post_stream(payload: dict, headers: dict, *, read_timeout: float) -> str:
         evt = json.loads(data)
       except json.JSONDecodeError:
         continue
-      if evt.get("type") == "response.output_text.delta":
+      etype = evt.get("type")
+      if etype == "response.output_text.delta":
         delta = evt.get("delta")
         if delta:
           buf.append(delta)
-  return "".join(buf)
+      elif etype == "response.completed":
+        reported = evt.get("response", {}).get("usage")
+        if isinstance(reported, dict):
+          usage = reported
+  return "".join(buf), usage
 
 
 def call(
@@ -97,8 +106,12 @@ def call(
   read_timeout: float = 600.0,
   max_attempts: int = 2,
   backoff_seconds: float = 5.0,
-) -> str:
-  """Call OpenClaw with the given input and return the full text response.
+) -> tuple[str, Optional[dict]]:
+  """Call OpenClaw with the given input and return (text, usage).
+
+  `usage` mirrors the `response.usage` object from the terminal
+  `response.completed` event — typically {input_tokens, output_tokens,
+  total_tokens}. May be None if the stream ended without one.
 
   Retries transient httpx errors. Does NOT retry JSON parse failures — the
   caller decides whether to issue a corrective follow-up message.
@@ -192,5 +205,5 @@ def call_json(
   session_id: str,
   read_timeout: float = 600.0,
 ) -> OpenClawResponse:
-  raw = call(input_text, model=model, session_id=session_id, read_timeout=read_timeout)
+  raw, _usage = call(input_text, model=model, session_id=session_id, read_timeout=read_timeout)
   return parse_json_response(raw)

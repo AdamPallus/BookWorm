@@ -1,11 +1,46 @@
+# --- python ---
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+
+# --- secrets / env ---
 .env
+.env.*
+
+# --- editor / OS ---
+.DS_Store
+.idea/
+.vscode/
+
+# --- node ---
+node_modules/
+
+# --- runtime data ---
 data/
 bookworm.db
-*.log
-.DS_Store
-node_modules/
 bookworm-hybrid.db
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# --- logs ---
+*.log
+
+# --- test artifacts ---
+playwright-report/
+test-results/
+.coverage
+htmlcov/
+
+# --- claude code / agent state ---
 .claude/
+
+# --- one-off demo/scratch artifacts at repo root ---
+# (sample wiki output and prototype HTML demos that lived here during early
+# development; if you regenerate them, do it under data/ or out-of-tree)
+/wiki/
+/red-rising-wiki-demo.html
+/red-rising-wiki-interactive.html

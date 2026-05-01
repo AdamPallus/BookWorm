@@ -1311,6 +1311,10 @@
       <span id="qaContextText">I know everything up to your current page.</span>
       <button id="qaAskLocationLink" class="qa-context-link hidden">↩ Back to question location</button>
     </div>
+    <div id="qaWikiPicker" class="qa-context hidden" style="gap:8px;">
+      <span style="opacity:0.75;">Wiki:</span>
+      <select id="qaWikiSelect" style="flex:1; min-width:0;"></select>
+    </div>
     <div id="qaMessages" class="qa-messages"></div>
     <div class="qa-input-wrap">
       <textarea
@@ -1554,6 +1558,8 @@
       qaContextText: document.getElementById('qaContextText'),
       qaAskLocationLink: document.getElementById('qaAskLocationLink'),
       qaFab: document.getElementById('qaFab'),
+      qaWikiPicker: document.getElementById('qaWikiPicker'),
+      qaWikiSelect: document.getElementById('qaWikiSelect'),
       settingsModal: document.getElementById('settingsModal'),
       apiKeyInput: document.getElementById('apiKeyInput'),
       currentKey: document.getElementById('currentKey'),
@@ -3660,6 +3666,56 @@
       updateAnswerHistoryControls();
       renderAnswerHistory();
       updateReaderProgressText();
+      refreshWikiPicker();
+    }
+
+    async function refreshWikiPicker() {
+      const bookId = state.currentBookId;
+      if (!bookId) return;
+      try {
+        const data = await fetchJson(`/api/books/${bookId}/wikis`);
+        const wikis = data.wikis || [];
+        const sel = els.qaWikiSelect;
+        sel.innerHTML = '';
+        // "None (use legacy wiki)" first option — clears selection.
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = 'None (legacy wiki)';
+        sel.appendChild(none);
+        for (const w of wikis) {
+          const opt = document.createElement('option');
+          opt.value = String(w.id);
+          const count = w.applied_segments || 0;
+          opt.textContent = `${w.name} (${count} seg)`;
+          sel.appendChild(opt);
+        }
+        sel.value = data.selected_wiki_id != null ? String(data.selected_wiki_id) : '';
+        // Only show the picker if there's actually a built wiki to choose.
+        if (wikis.length === 0) {
+          els.qaWikiPicker.classList.add('hidden');
+        } else {
+          els.qaWikiPicker.classList.remove('hidden');
+        }
+      } catch (err) {
+        console.warn('wiki picker load failed', err);
+        els.qaWikiPicker.classList.add('hidden');
+      }
+    }
+
+    async function onWikiSelectChange() {
+      const bookId = state.currentBookId;
+      if (!bookId) return;
+      const v = els.qaWikiSelect.value;
+      const body = { wiki_id: v === '' ? null : Number(v) };
+      try {
+        await fetch(`/api/books/${bookId}/selected-wiki`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch (err) {
+        console.warn('wiki selection save failed', err);
+      }
     }
 
     function syncReaderWidthInput(widthPx) {
@@ -3864,6 +3920,7 @@
       els.qaBackBtn.addEventListener('click', () => { if (state.answerHistoryIndex > 0) { state.answerHistoryIndex--; renderAnswerHistory(); } });
       els.qaForwardBtn.addEventListener('click', () => { if (state.answerHistoryIndex < state.answerHistory.length - 1) { state.answerHistoryIndex++; renderAnswerHistory(); } });
       els.qaModelSelect.addEventListener('change', () => setModel(els.qaModelSelect.value));
+      els.qaWikiSelect.addEventListener('change', onWikiSelectChange);
       els.readerSearchRun.addEventListener('click', async () => { try { await runReaderSearch(); } catch(e) { updateReaderSearchStatus('Search failed'); } });
       els.readerSearchInput.addEventListener('keydown', async event => { if (event.key !== 'Enter') return; event.preventDefault(); try { await runReaderSearch(); } catch(e) { updateReaderSearchStatus('Search failed'); } });
       els.readerSearchPrev.addEventListener('click', async () => { try { await cycleReaderSearchMatch(-1); } catch(e) { updateReaderSearchStatus('Jump failed'); } });

@@ -1,23 +1,16 @@
-"""The main wiki-builder loop.
+"""The wiki-builder worker.
 
-For each pending segment in story_order:
-  1. Reconstruct segment text from `chunks` table.
-  2. Build digest from the wiki working tree + previous summary card.
-  3. Open a fresh OpenClaw session for the mini.
-  4. Up to 3 attempts: send mini prompt, parse JSON, run deterministic checks.
-     Retry within the same mini session with the issue list.
-  5. On pass: apply diff, commit, tag, store summary card,
-     update wiki_segments row.
-  6. On 3-strikes failure: revert working tree, mark segment quarantined.
-  7. Sleep --segment-interval-seconds between segments.
+One OpenClaw session per run. The agent persists in that session across
+segments. Per segment:
+  1. Reconstruct segment text from the chunks table.
+  2. Send a segment message to the agent (same session).
+  3. Agent edits the wiki working tree via its Write/Edit/Glob/Grep/Read tools.
+  4. Run deterministic checks on the working tree.
+  5. If pass: stage, commit, tag seg-NNNN, mark applied, next segment.
+  6. If fail: revert, send rejection message, retry (up to MAX_ATTEMPTS).
+  7. After MAX_ATTEMPTS failures: revert and quarantine segment.
 
-There is no supervisor stage. The deterministic checks (schema, banned
-phrases, evidence-quote substring, q-id hygiene) are the only verification.
-The earlier supervisor design sent the same raw segment text to a more
-expensive model and added zero outcome value across a 50-segment run, so it
-was removed. If a real signal of LLM-grade hallucination shows up in
-practice, reintroduce a much cheaper checker that sees only the diff plus
-relevant excerpts — not the whole segment.
+There is no supervisor stage. Deterministic checks are the only verification.
 """
 
 from __future__ import annotations
@@ -29,17 +22,40 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from . import openclaw_client
-from .applier import ApplyResult, apply_diff, revert_working_tree
-from .checks import run_all_checks
-from .digest import build_digest, load_all_question_ids, load_open_questions_active_ids
-from .prompts import MINI_SYSTEM_PROMPT, build_mini_prompt
+from .applier import StagedDiff, commit_and_tag, reject, stage_all
+from .checks import check_working_tree
+from .prompts import build_rejection_message, build_segment_message
 
 log = logging.getLogger("wiki_builder.worker")
 
 MAX_ATTEMPTS_PER_SEGMENT = 3
+
+# Compaction thresholds. When the agent's session total_tokens (as reported
+# on the terminal response.completed event) reaches the wiki's effective
+# threshold, the worker rotates to a fresh OpenClaw session before the next
+# segment and includes the last RECENT_SEGMENTS_FOR_COMPACTION segments of
+# book text in the first message as labeled context.
+#
+# Default: 240k ≈ 60% of the 400k gpt-5.4-mini cap, leaving room for the
+# next segment + the agent's wiki reads + tool-call chatter before the wall.
+# Per-wiki overrides live on `wikis.compact_at_total_tokens`; use them when
+# the OpenClaw config or model effective limit differs (e.g. premier models
+# that read/write more aggressively per segment, or a tighter OpenClaw cap).
+COMPACT_AT_TOTAL_TOKENS = 240_000
+RECENT_SEGMENTS_FOR_COMPACTION = 3
+
+
+def _compaction_threshold(conn: sqlite3.Connection, wiki_id: int) -> int:
+  row = conn.execute(
+    "SELECT compact_at_total_tokens FROM wikis WHERE id = ?",
+    (wiki_id,),
+  ).fetchone()
+  if row is not None and row[0] is not None and int(row[0]) > 0:
+    return int(row[0])
+  return COMPACT_AT_TOTAL_TOKENS
 
 
 @dataclass
@@ -48,6 +64,10 @@ class WorkerConfig:
   max_segments: Optional[int] = None
   mini_model: str = openclaw_client.DEFAULT_MINI_MODEL
   read_timeout_seconds: float = 600.0
+  # If True, force a brand-new OpenClaw session even if one is already
+  # persisted on the wiki row. Otherwise we resume the existing session so
+  # the agent keeps its in-context memory of prior segments.
+  reset_session: bool = False
 
 
 @dataclass
@@ -80,24 +100,15 @@ def _next_pending_segment(conn: sqlite3.Connection, wiki_id: int) -> Optional[Se
   return SegmentRow(*row)
 
 
-def _previous_summary_card(conn: sqlite3.Connection, wiki_id: int, story_order: int) -> Optional[dict]:
+def _chapter_label(conn: sqlite3.Connection, book_id: int, chapter_index: int) -> str:
   row = conn.execute(
-    """
-    SELECT s.summary_json
-    FROM wiki_segment_summaries s
-    JOIN wiki_segments w ON w.id = s.segment_id
-    WHERE w.wiki_id = ? AND w.story_order < ?
-    ORDER BY w.story_order DESC
-    LIMIT 1
-    """,
-    (wiki_id, story_order),
+    "SELECT title FROM chapters WHERE book_id = ? AND chapter_index = ?",
+    (book_id, chapter_index),
   ).fetchone()
-  if not row:
-    return None
-  try:
-    return json.loads(row[0])
-  except json.JSONDecodeError:
-    return None
+  title = row[0] if row else None
+  if title:
+    return f"chapter {chapter_index}: {title}"
+  return f"chapter {chapter_index}"
 
 
 def reconstruct_chapter_text(conn: sqlite3.Connection, book_id: int, chapter_index: int) -> str:
@@ -117,20 +128,106 @@ def _segment_text(conn: sqlite3.Connection, seg: SegmentRow) -> str:
   return chapter_text[seg.start_char : seg.end_char]
 
 
-def _wiki_dir_for(conn: sqlite3.Connection, wiki_id: int) -> Path:
-  row = conn.execute("SELECT repo_path FROM wikis WHERE id = ?", (wiki_id,)).fetchone()
+def _absorbed_prelude(
+  conn: sqlite3.Connection,
+  wiki_id: int,
+  next_story_order: int,
+) -> tuple[str, list[int]]:
+  """Return (prelude_text, ids) for all 'absorbed' segments preceding the
+  next pending segment. The prelude rolls forward across worker runs — any
+  absorbed segment with status='absorbed' and story_order < next_story_order
+  gets folded in. Their status is flipped to 'applied' alongside the next
+  successful commit so they don't get folded twice.
+  """
+  rows = conn.execute(
+    """
+    SELECT id, book_id, chapter_index, start_char, end_char
+    FROM wiki_segments
+    WHERE wiki_id = ? AND status = 'absorbed' AND story_order < ?
+    ORDER BY story_order ASC
+    """,
+    (wiki_id, next_story_order),
+  ).fetchall()
+  if not rows:
+    return ("", [])
+  parts: list[str] = []
+  ids: list[int] = []
+  for row in rows:
+    seg_id, book_id, chapter_index, start_char, end_char = row
+    chapter_text = reconstruct_chapter_text(conn, book_id, chapter_index)
+    parts.append(chapter_text[start_char:end_char])
+    ids.append(seg_id)
+  return ("\n\n".join(parts), ids)
+
+
+def _wiki_row(conn: sqlite3.Connection, wiki_id: int) -> tuple:
+  row = conn.execute(
+    "SELECT slug, repo_path FROM wikis WHERE id = ?",
+    (wiki_id,),
+  ).fetchone()
   if not row:
     raise RuntimeError(f"wiki {wiki_id} not found")
-  return Path(row[0]) / "wiki"
+  return row
+
+
+def _resolve_session_id(
+  conn: sqlite3.Connection,
+  wiki_id: int,
+  slug: str,
+  *,
+  reset: bool,
+) -> tuple[str, bool]:
+  """Return (session_id, was_resumed). Persists newly-minted session ids on
+  the wiki row so subsequent worker runs continue the same conversation."""
+  if not reset:
+    row = conn.execute(
+      "SELECT openclaw_session_id FROM wikis WHERE id = ?",
+      (wiki_id,),
+    ).fetchone()
+    existing = row[0] if row else None
+    if existing:
+      return existing, True
+  fresh = openclaw_client.new_session_id(label=f"wiki-{slug}")
+  conn.execute(
+    "UPDATE wikis SET openclaw_session_id = ? WHERE id = ?",
+    (fresh, wiki_id),
+  )
+  conn.commit()
+  return fresh, False
 
 
 def _format_tag(story_order: int) -> str:
   return f"seg-{story_order:04d}"
 
 
-def _commit_message(seg: SegmentRow, log_entry: str) -> str:
-  first = log_entry.strip().split("\n")[0][:120]
-  return f"{_format_tag(seg.story_order)}: {first}"
+def _format_summary(diff: StagedDiff) -> str:
+  parts = []
+  if diff.files_added:
+    parts.append(f"+{diff.files_added}")
+  if diff.files_modified:
+    parts.append(f"~{diff.files_modified}")
+  if diff.files_deleted:
+    parts.append(f"-{diff.files_deleted}")
+  if diff.files_renamed:
+    parts.append(f"\u2192{diff.files_renamed}")
+  return " ".join(parts) or "no-op"
+
+
+def _mark_absorbed_applied(
+  conn: sqlite3.Connection,
+  absorbed_ids: list[int],
+  *,
+  snapshot_tag: Optional[str],
+) -> None:
+  if not absorbed_ids:
+    return
+  applied_at = datetime.utcnow().isoformat()
+  for seg_id in absorbed_ids:
+    conn.execute(
+      "UPDATE wiki_segments SET status = 'applied', applied_at = ?, snapshot_tag = COALESCE(?, snapshot_tag) WHERE id = ?",
+      (applied_at, snapshot_tag, seg_id),
+    )
+  conn.commit()
 
 
 def _mark_segment(
@@ -141,42 +238,65 @@ def _mark_segment(
   attempts: int,
   last_error: Optional[str],
   snapshot_tag: Optional[str],
+  session_total_tokens: Optional[int] = None,
 ) -> None:
   conn.execute(
     """
     UPDATE wiki_segments
     SET status = ?, attempts = ?, last_error = ?,
         applied_at = CASE WHEN ? = 'applied' THEN ? ELSE applied_at END,
-        snapshot_tag = COALESCE(?, snapshot_tag)
+        snapshot_tag = COALESCE(?, snapshot_tag),
+        session_total_tokens = COALESCE(?, session_total_tokens)
     WHERE id = ?
     """,
-    (status, attempts, last_error, status, datetime.utcnow().isoformat(), snapshot_tag, seg.id),
+    (status, attempts, last_error, status, datetime.utcnow().isoformat(),
+     snapshot_tag, session_total_tokens, seg.id),
   )
   conn.commit()
 
 
-def _store_summary_card(conn: sqlite3.Connection, segment_id: int, summary_card: dict) -> None:
+def _record_session_total_tokens(
+  conn: sqlite3.Connection,
+  wiki_id: int,
+  total_tokens: Optional[int],
+) -> None:
+  if total_tokens is None:
+    return
   conn.execute(
-    """
-    INSERT INTO wiki_segment_summaries (segment_id, summary_json)
-    VALUES (?, ?)
-    ON CONFLICT(segment_id) DO UPDATE SET summary_json = excluded.summary_json
-    """,
-    (segment_id, json.dumps(summary_card)),
+    "UPDATE wikis SET openclaw_session_total_tokens = ? WHERE id = ?",
+    (total_tokens, wiki_id),
   )
   conn.commit()
 
 
-def _format_issues(issues) -> List[dict]:
-  out = []
-  for i in issues:
-    if isinstance(i, dict):
-      out.append(i)
-    elif hasattr(i, "as_dict"):
-      out.append(i.as_dict())
-    else:
-      out.append({"kind": "other", "where": "?", "explanation": str(i)})
-  return out
+def _recent_applied_segment_texts(
+  conn: sqlite3.Connection,
+  wiki_id: int,
+  before_story_order: int,
+  n: int,
+) -> str:
+  """Return up to `n` most recently-applied segments' raw book text,
+  concatenated in chronological (story_order) order — used as context on
+  the first message of a new session after compaction."""
+  rows = conn.execute(
+    """
+    SELECT book_id, chapter_index, start_char, end_char, story_order
+    FROM wiki_segments
+    WHERE wiki_id = ? AND status = 'applied' AND story_order < ?
+    ORDER BY story_order DESC
+    LIMIT ?
+    """,
+    (wiki_id, before_story_order, n),
+  ).fetchall()
+  if not rows:
+    return ""
+  rows = list(reversed(rows))  # chronological
+  parts: list[str] = []
+  for row in rows:
+    book_id, chapter_index, start_char, end_char, _order = row
+    chapter_text = reconstruct_chapter_text(conn, book_id, chapter_index)
+    parts.append(chapter_text[start_char:end_char])
+  return "\n\n".join(parts)
 
 
 def process_segment(
@@ -184,134 +304,219 @@ def process_segment(
   wiki_id: int,
   seg: SegmentRow,
   config: WorkerConfig,
-) -> Optional[ApplyResult]:
-  wiki_dir = _wiki_dir_for(conn, wiki_id)
+  session_id: str,
+  *,
+  compaction_context: Optional[str] = None,
+  is_session_opener: bool = False,
+  new_book_label: Optional[str] = None,
+) -> Optional[StagedDiff]:
+  slug, repo_path = _wiki_row(conn, wiki_id)
+  wiki_dir = Path(repo_path) / "wiki"
   segment_text = _segment_text(conn, seg)
-  if not segment_text.strip():
-    log.warning("seg %s is empty; marking applied with no-op", _format_tag(seg.story_order))
+  tag = _format_tag(seg.story_order)
+
+  prelude_text, absorbed_ids = _absorbed_prelude(conn, wiki_id, seg.story_order)
+  if absorbed_ids:
+    log.info("seg %s folding in %d absorbed segment(s)", tag, len(absorbed_ids))
+
+  if not segment_text.strip() and not prelude_text.strip():
+    log.warning("seg %s is empty; marking applied as no-op", tag)
     _mark_segment(conn, seg, status="applied", attempts=seg.attempts, last_error=None, snapshot_tag=None)
+    _mark_absorbed_applied(conn, absorbed_ids, snapshot_tag=None)
     return None
 
-  prior_card = _previous_summary_card(conn, wiki_id, seg.story_order)
-  prior_active = prior_card.get("active_characters", []) if prior_card else None
-  digest = build_digest(wiki_dir, segment_text, prior_active_characters=prior_active)
-  log.info(
-    "digest for %s: %d tokens, %d pages",
-    _format_tag(seg.story_order),
-    digest.token_count,
-    len(digest.pages_included),
+  chapter_label = _chapter_label(conn, seg.book_id, seg.chapter_index)
+  message = build_segment_message(
+    wiki_slug=slug,
+    wiki_dir=str(wiki_dir),
+    snapshot_tag=tag,
+    chapter_label=chapter_label,
+    segment_text=segment_text,
+    prelude_text=prelude_text or None,
+    compaction_context=compaction_context or None,
+    is_session_opener=is_session_opener,
+    new_book_label=new_book_label,
   )
 
-  mini_session = openclaw_client.new_session_id(label=f"mini-seg-{seg.story_order:04d}")
-  prior_issues: Optional[list] = None
-  prior_diff_str: Optional[str] = None
-
+  check_result = None
+  last_usage: Optional[dict] = None
   for attempt in range(1, MAX_ATTEMPTS_PER_SEGMENT + 1):
-    log.info("seg %s attempt %d", _format_tag(seg.story_order), attempt)
-
-    if attempt == 1:
-      mini_input = MINI_SYSTEM_PROMPT + "\n\n" + build_mini_prompt(
-        segment_text=segment_text,
-        digest_text=digest.text,
-        previous_summary_card=prior_card,
-        prior_attempt_issues=None,
-        prior_attempt_diff=None,
-      )
-    else:
-      mini_input = build_mini_prompt(
-        segment_text=segment_text,
-        digest_text=digest.text,
-        previous_summary_card=prior_card,
-        prior_attempt_issues=prior_issues,
-        prior_attempt_diff=prior_diff_str,
-      )
+    log.info("seg %s attempt %d", tag, attempt)
 
     try:
-      mini_response = openclaw_client.call_json(
-        mini_input,
+      _text, last_usage = openclaw_client.call(
+        message,
         model=config.mini_model,
-        session_id=mini_session,
+        session_id=session_id,
         read_timeout=config.read_timeout_seconds,
       )
     except openclaw_client.OpenClawError as e:
-      log.error("openclaw mini call failed: %s", e)
+      log.error("openclaw call failed on seg %s: %s", tag, e)
+      reject(wiki_dir)
       _mark_segment(
         conn, seg, status="pending",
         attempts=seg.attempts + attempt,
-        last_error=f"openclaw mini error: {e}",
+        last_error=f"openclaw error: {e}",
         snapshot_tag=None,
       )
       return None
 
-    if mini_response.parsed is None:
-      prior_issues = [{
-        "kind": "schema",
-        "where": "<top>",
-        "explanation": f"output was not valid JSON: {mini_response.parse_error}",
-      }]
-      prior_diff_str = mini_response.raw_text
-      continue
+    # Record the session's cumulative token count on every call so we can
+    # rotate even if the segment eventually quarantines.
+    if last_usage is not None:
+      total = last_usage.get("total_tokens")
+      if isinstance(total, int):
+        _record_session_total_tokens(conn, wiki_id, total)
+        log.info("seg %s session_total_tokens=%d", tag, total)
 
-    diff = mini_response.parsed
-    prior_diff_str = json.dumps(diff, indent=2)
-
-    existing_qids = load_all_question_ids(wiki_dir)
-    active_qids = load_open_questions_active_ids(wiki_dir)
-
-    det_result = run_all_checks(
-      diff,
-      segment_text=segment_text,
-      existing_question_ids=existing_qids,
-      active_question_ids=active_qids,
-    )
-    if not det_result.ok:
-      prior_issues = _format_issues(det_result.issues)
-      log.info(
-        "seg %s attempt %d: %d deterministic issues",
-        _format_tag(seg.story_order), attempt, len(prior_issues),
+    check_result = check_working_tree(wiki_dir)
+    if check_result.ok:
+      diff = stage_all(wiki_dir)
+      commit_and_tag(
+        wiki_dir,
+        snapshot_tag=tag,
+        commit_message=f"{tag}: {_format_summary(diff)}",
       )
-      continue
+      applied_total = last_usage.get("total_tokens") if isinstance(last_usage, dict) else None
+      _mark_segment(
+        conn, seg,
+        status="applied",
+        attempts=seg.attempts + attempt,
+        last_error=None,
+        snapshot_tag=tag,
+        session_total_tokens=applied_total if isinstance(applied_total, int) else None,
+      )
+      _mark_absorbed_applied(conn, absorbed_ids, snapshot_tag=tag)
+      log.info(
+        "seg %s applied: +%d ~%d -%d \u2192%d%s",
+        tag, diff.files_added, diff.files_modified, diff.files_deleted, diff.files_renamed,
+        f" (+{len(absorbed_ids)} absorbed)" if absorbed_ids else "",
+      )
+      return diff
 
-    tag = _format_tag(seg.story_order)
-    msg = _commit_message(seg, diff.get("log_entry", ""))
-    result = apply_diff(wiki_dir=wiki_dir, diff=diff, snapshot_tag=tag, commit_message=msg)
-    _store_summary_card(conn, seg.id, diff["summary_card"])
-    _mark_segment(
-      conn, seg,
-      status="applied",
-      attempts=seg.attempts + attempt,
-      last_error=None,
-      snapshot_tag=tag,
-    )
     log.info(
-      "seg %s applied: +%d pages, ~%d updated, %d Q+/%d Q-",
-      tag,
-      len(result.pages_created),
-      len(result.pages_updated),
-      len(result.questions_added),
-      len(result.questions_resolved),
+      "seg %s attempt %d failed checks: %d issues",
+      tag, attempt, len(check_result.issues),
     )
-    return result
+    for issue in check_result.issues[:5]:
+      log.info("  - [%s] %s: %s", issue.kind, issue.where, issue.detail)
+    reject(wiki_dir)
+    message = build_rejection_message(check_result.issues)
 
-  # Out of attempts. Quarantine: revert any partial changes and mark segment.
-  log.warning(
-    "seg %s quarantined: %d attempts failed deterministic checks",
-    _format_tag(seg.story_order), MAX_ATTEMPTS_PER_SEGMENT,
+  log.warning("seg %s quarantined after %d attempts", tag, MAX_ATTEMPTS_PER_SEGMENT)
+  reject(wiki_dir)
+  last_err = (
+    json.dumps([{"kind": i.kind, "where": i.where, "detail": i.detail} for i in check_result.issues])[:2000]
+    if check_result is not None
+    else "out of attempts"
   )
-  revert_working_tree(_wiki_dir_for(conn, wiki_id))
   _mark_segment(
     conn, seg,
     status="quarantined",
     attempts=seg.attempts + MAX_ATTEMPTS_PER_SEGMENT,
-    last_error=json.dumps(prior_issues)[:2000] if prior_issues else "out of attempts",
+    last_error=last_err,
     snapshot_tag=None,
   )
   return None
 
 
+def _last_applied_book_id(conn: sqlite3.Connection, wiki_id: int) -> Optional[int]:
+  row = conn.execute(
+    """
+    SELECT book_id FROM wiki_segments
+    WHERE wiki_id = ? AND status = 'applied'
+    ORDER BY story_order DESC
+    LIMIT 1
+    """,
+    (wiki_id,),
+  ).fetchone()
+  return int(row[0]) if row else None
+
+
+def _book_label(conn: sqlite3.Connection, wiki_id: int, book_id: int) -> str:
+  """Human label for a book within a multi-book wiki, e.g.
+  "'Golden Son' (book 2 of the series)". Used in the new-book session
+  opener brief so the agent knows which volume this is."""
+  row = conn.execute(
+    """
+    SELECT b.title, wb.series_index,
+           (SELECT COUNT(*) FROM wiki_books WHERE wiki_id = ?) AS total
+    FROM books b
+    JOIN wiki_books wb ON wb.book_id = b.id
+    WHERE wb.wiki_id = ? AND b.id = ?
+    """,
+    (wiki_id, wiki_id, book_id),
+  ).fetchone()
+  if not row:
+    return f"book id {book_id}"
+  title = row[0] or f"book id {book_id}"
+  series_index = int(row[1])  # zero-based
+  total = int(row[2] or 1)
+  # Display as 1-based for humans.
+  return f"{title!r} (book {series_index + 1} of {total} in this wiki)"
+
+
+def _force_new_session(
+  conn: sqlite3.Connection,
+  wiki_id: int,
+  slug: str,
+) -> str:
+  """Mint a fresh OpenClaw session for the wiki and clear the token counter.
+  Used on book transitions in a multi-book wiki."""
+  new_id = openclaw_client.new_session_id(label=f"wiki-{slug}")
+  conn.execute(
+    "UPDATE wikis SET openclaw_session_id = ?, openclaw_session_total_tokens = NULL WHERE id = ?",
+    (new_id, wiki_id),
+  )
+  conn.commit()
+  return new_id
+
+
+def _maybe_rotate_session(
+  conn: sqlite3.Connection,
+  wiki_id: int,
+  slug: str,
+  current_session_id: str,
+) -> tuple[str, bool]:
+  """If the current session's last-observed total_tokens crossed the
+  compaction threshold, mint a fresh session id, clear the token counter,
+  and return (new_id, True). Otherwise return (current_session_id, False).
+
+  Called before each segment so rotation happens on the new segment's
+  first message — the recent-context prelude is part of that first message.
+  """
+  row = conn.execute(
+    "SELECT openclaw_session_total_tokens FROM wikis WHERE id = ?",
+    (wiki_id,),
+  ).fetchone()
+  last_total = row[0] if row else None
+  threshold = _compaction_threshold(conn, wiki_id)
+  if last_total is None or last_total < threshold:
+    return current_session_id, False
+  new_id = openclaw_client.new_session_id(label=f"wiki-{slug}")
+  conn.execute(
+    "UPDATE wikis SET openclaw_session_id = ?, openclaw_session_total_tokens = NULL WHERE id = ?",
+    (new_id, wiki_id),
+  )
+  conn.commit()
+  log.info(
+    "session for wiki %s at %d tokens (>= %d); rotating to %s",
+    slug, last_total, threshold, new_id,
+  )
+  return new_id, True
+
+
 def run_worker(conn: sqlite3.Connection, wiki_id: int, config: WorkerConfig) -> int:
-  """Process pending segments until none remain or max_segments reached.
-  Returns count of segments processed (applied + quarantined)."""
+  slug, _ = _wiki_row(conn, wiki_id)
+  session_id, resumed = _resolve_session_id(conn, wiki_id, slug, reset=config.reset_session)
+  log.info(
+    "starting worker for wiki %s, session %s (%s)",
+    slug, session_id, "resumed" if resumed else "new",
+  )
+  # The next segment is a session-opener iff the session itself is brand new.
+  # Set after every rotation, consumed (and cleared) by the next call to
+  # process_segment.
+  opener_pending = not resumed
   processed = 0
   while True:
     if config.max_segments is not None and processed >= config.max_segments:
@@ -321,7 +526,54 @@ def run_worker(conn: sqlite3.Connection, wiki_id: int, config: WorkerConfig) -> 
     if seg is None:
       log.info("no pending segments; worker done")
       break
-    process_segment(conn, wiki_id, seg, config)
+
+    # New book in a multi-book wiki: force a fresh session and a session
+    # opener with a brief tailored to this case. Book transitions take
+    # precedence over compaction-based rotation since both want a new
+    # session anyway, and the new-book brief is more specific.
+    new_book_label: Optional[str] = None
+    last_book_id = _last_applied_book_id(conn, wiki_id)
+    if last_book_id is not None and last_book_id != seg.book_id:
+      session_id = _force_new_session(conn, wiki_id, slug)
+      opener_pending = True
+      new_book_label = _book_label(conn, wiki_id, seg.book_id)
+      log.info(
+        "book transition (prev book_id=%s, new book_id=%s); rotating session to %s",
+        last_book_id, seg.book_id, session_id,
+      )
+
+    session_id, rotated = _maybe_rotate_session(conn, wiki_id, slug, session_id)
+    compaction_context: Optional[str] = None
+    if rotated:
+      opener_pending = True
+      compaction_context = _recent_applied_segment_texts(
+        conn, wiki_id, seg.story_order, RECENT_SEGMENTS_FOR_COMPACTION,
+      )
+      log.info(
+        "compaction: including ~%d chars of recent book text (last %d applied segments) in first message",
+        len(compaction_context), RECENT_SEGMENTS_FOR_COMPACTION,
+      )
+
+    is_opener = opener_pending
+    if is_opener:
+      log.info(
+        "seg %s is a session opener; injecting full task brief + example page%s",
+        _format_tag(seg.story_order),
+        " (new book in series)" if new_book_label else "",
+      )
+    process_segment(
+      conn, wiki_id, seg, config, session_id,
+      compaction_context=compaction_context,
+      is_session_opener=is_opener,
+      new_book_label=new_book_label,
+    )
+    # Only clear the opener flag if the segment actually moved off pending.
+    # If the openclaw call itself errored on attempt 1, the message likely
+    # never reached the agent — we need to inject the brief on the retry.
+    post_seg = _next_pending_segment(conn, wiki_id)
+    same_seg_still_pending = post_seg is not None and post_seg.id == seg.id
+    if not same_seg_still_pending:
+      opener_pending = False
     processed += 1
     next_seg = _next_pending_segment(conn, wiki_id)
     is_last = next_seg is None or (
